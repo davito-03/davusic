@@ -1,0 +1,6 @@
+// Davusic — ventana ancha en el scroll de Niri
+window-rule {
+    match app-id="^io\\.github\\.davo\\.davusic$"
+    match app-id="^davusic$"
+    default-column-width { proportion 0.70; }
+}

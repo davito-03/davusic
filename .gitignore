@@ -1,0 +1,18 @@
+/target/
+/build.log
+/.build.log
+*.log
+.DS_Store
+.env
+.env.*
+node_modules/
+/dist/
+/.tauri/
+*.AppImage
+*.deb
+*.rpm
+
+# Generado por Tauri/Python
+/gen/schemas/
+__pycache__/
+*.pyc

@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Davusic
+GenericName=Reproductor de música
+Comment=Tu música, en tu PC. Reproductor local-first para Linux.
+Exec=davusic
+TryExec=davusic
+Icon=io.github.davo.davusic
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=musica;música;reproductor;player;local;offline;playlist;davusic;
+StartupNotify=true
+StartupWMClass=davusic
+SingleMainWindow=true
