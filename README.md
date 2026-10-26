@@ -193,13 +193,9 @@ La primera vez, Davusic copia la configuración de instalaciones anteriores si e
 
 ## Publicar en GitHub
 
-El árbol está preparado para un repositorio público: `target/`, logs y datos locales están excluidos por `.gitignore`, la licencia es MIT y el frontend no necesita Node ni un servidor de desarrollo.
+El árbol está preparado para un repositorio público: `target/`, logs, `gen/schemas` y datos locales están excluidos por `.gitignore`, la licencia es MIT y el frontend no necesita Node ni un servidor de desarrollo. El repositorio local ya está inicializado en `main` con el primer commit; solo falta el remoto.
 
 ```bash
-git init
-git add .
-git commit -m "Davusic 0.1.0"
-git branch -M main
 git remote add origin git@github.com:TU_USUARIO/davusic.git
 git push -u origin main
 ```
