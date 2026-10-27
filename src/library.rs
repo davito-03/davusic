@@ -115,7 +115,11 @@ pub fn scan(paths: &Paths, config: &Config, app: Option<&AppHandle>) -> LibraryS
             .cmp(&b.artist.to_lowercase())
             .then(a.album.to_lowercase().cmp(&b.album.to_lowercase()))
             .then(a.disc_number.unwrap_or(1).cmp(&b.disc_number.unwrap_or(1)))
-            .then(a.track_number.unwrap_or(0).cmp(&b.track_number.unwrap_or(0)))
+            .then(
+                a.track_number
+                    .unwrap_or(0)
+                    .cmp(&b.track_number.unwrap_or(0)),
+            )
             .then(a.title.to_lowercase().cmp(&b.title.to_lowercase()))
     });
 
@@ -123,22 +127,24 @@ pub fn scan(paths: &Paths, config: &Config, app: Option<&AppHandle>) -> LibraryS
     let mut artists: HashMap<String, ArtistAgg> = HashMap::new();
 
     for track in &tracks {
-        let album_entry = albums.entry(track.album_id.clone()).or_insert_with(|| AlbumAgg {
-            album: Album {
-                id: track.album_id.clone(),
-                title: track.album.clone(),
-                artist: track.album_artist.clone(),
-                artist_id: track.artist_id.clone(),
-                year: track.year,
-                cover: track.cover.clone(),
-                accent: track.accent.clone(),
-                accent2: track.accent2.clone(),
-                genre: track.genre.clone(),
-                track_ids: Vec::new(),
-                added_at: track.added_at,
-            },
-            tracks: Vec::new(),
-        });
+        let album_entry = albums
+            .entry(track.album_id.clone())
+            .or_insert_with(|| AlbumAgg {
+                album: Album {
+                    id: track.album_id.clone(),
+                    title: track.album.clone(),
+                    artist: track.album_artist.clone(),
+                    artist_id: track.artist_id.clone(),
+                    year: track.year,
+                    cover: track.cover.clone(),
+                    accent: track.accent.clone(),
+                    accent2: track.accent2.clone(),
+                    genre: track.genre.clone(),
+                    track_ids: Vec::new(),
+                    added_at: track.added_at,
+                },
+                tracks: Vec::new(),
+            });
         if album_entry.album.cover.is_empty() && !track.cover.is_empty() {
             album_entry.album.cover = track.cover.clone();
             album_entry.album.accent = track.accent.clone();
@@ -153,19 +159,21 @@ pub fn scan(paths: &Paths, config: &Config, app: Option<&AppHandle>) -> LibraryS
             track.id.clone(),
         ));
 
-        let artist_entry = artists.entry(track.artist_id.clone()).or_insert_with(|| ArtistAgg {
-            artist: Artist {
-                id: track.artist_id.clone(),
-                name: track.artist.clone(),
-                cover: track.cover.clone(),
-                accent: track.accent.clone(),
-                accent2: track.accent2.clone(),
-                genres: Vec::new(),
-                track_ids: Vec::new(),
-                album_count: 0,
-            },
-            albums: HashSet::new(),
-        });
+        let artist_entry = artists
+            .entry(track.artist_id.clone())
+            .or_insert_with(|| ArtistAgg {
+                artist: Artist {
+                    id: track.artist_id.clone(),
+                    name: track.artist.clone(),
+                    cover: track.cover.clone(),
+                    accent: track.accent.clone(),
+                    accent2: track.accent2.clone(),
+                    genres: Vec::new(),
+                    track_ids: Vec::new(),
+                    album_count: 0,
+                },
+                albums: HashSet::new(),
+            });
         if artist_entry.artist.cover.is_empty() && !track.cover.is_empty() {
             artist_entry.artist.cover = track.cover.clone();
             artist_entry.artist.accent = track.accent.clone();
@@ -222,7 +230,10 @@ pub fn scan(paths: &Paths, config: &Config, app: Option<&AppHandle>) -> LibraryS
             "library-scan-progress",
             serde_json::json!({ "stage": "done", "done": total, "total": total }),
         );
-        let _ = app.emit("library-scan-finished", serde_json::json!({ "tracks": tracks.len() }));
+        let _ = app.emit(
+            "library-scan-finished",
+            serde_json::json!({ "tracks": tracks.len() }),
+        );
     }
 
     LibrarySnapshot {
@@ -239,42 +250,91 @@ fn read_track(
     cover_store: &mut HashMap<PathBuf, Option<CoverInfo>>,
 ) -> Option<Track> {
     let tagged = lofty::read_from_path(path).ok();
-    let (tag_title, tag_artist, tag_album, tag_album_artist, tag_genre, tag_year, tag_track, tag_disc) =
-        if let Some(file) = tagged.as_ref() {
-            let tag = file.primary_tag().or_else(|| file.first_tag());
-            match tag {
-                Some(tag) => {
-                    let title = tag.title().map(|v| v.trim().to_string()).unwrap_or_default();
-                    let artist = tag.artist().map(|v| v.trim().to_string()).unwrap_or_default();
-                    let album = tag.album().map(|v| v.trim().to_string()).unwrap_or_default();
-                    let album_artist = tag
-                        .get_string(lofty::tag::ItemKey::AlbumArtist)
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .unwrap_or(&artist)
-                        .to_string();
-                    let genre = tag.genre().map(|v| v.trim().to_string()).unwrap_or_default();
-                    let year = tag.date().map(|date| u32::from(date.year)).filter(|v| *v > 0);
-                    (title, artist, album, album_artist, genre, year, tag.track(), tag.disk())
-                }
-                None => Default::default(),
+    let (
+        tag_title,
+        tag_artist,
+        tag_album,
+        tag_album_artist,
+        tag_genre,
+        tag_year,
+        tag_track,
+        tag_disc,
+    ) = if let Some(file) = tagged.as_ref() {
+        let tag = file.primary_tag().or_else(|| file.first_tag());
+        match tag {
+            Some(tag) => {
+                let title = tag
+                    .title()
+                    .map(|v| v.trim().to_string())
+                    .unwrap_or_default();
+                let artist = tag
+                    .artist()
+                    .map(|v| v.trim().to_string())
+                    .unwrap_or_default();
+                let album = tag
+                    .album()
+                    .map(|v| v.trim().to_string())
+                    .unwrap_or_default();
+                let album_artist = tag
+                    .get_string(lofty::tag::ItemKey::AlbumArtist)
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or(&artist)
+                    .to_string();
+                let genre = tag
+                    .genre()
+                    .map(|v| v.trim().to_string())
+                    .unwrap_or_default();
+                let year = tag
+                    .date()
+                    .map(|date| u32::from(date.year))
+                    .filter(|v| *v > 0);
+                (
+                    title,
+                    artist,
+                    album,
+                    album_artist,
+                    genre,
+                    year,
+                    tag.track(),
+                    tag.disk(),
+                )
             }
-        } else {
-            (String::new(), String::new(), String::new(), String::new(), String::new(), None, None, None)
-        };
+            None => Default::default(),
+        }
+    } else {
+        (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            None,
+            None,
+            None,
+        )
+    };
 
     let fallback_title = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("Sin título")
         .to_string();
-    let title = if tag_title.is_empty() { fallback_title } else { tag_title };
+    let title = if tag_title.is_empty() {
+        fallback_title
+    } else {
+        tag_title
+    };
     let artist = if tag_artist.is_empty() {
         "Artista desconocido".to_string()
     } else {
         tag_artist
     };
-    let album = if tag_album.is_empty() { "Sin álbum".to_string() } else { tag_album };
+    let album = if tag_album.is_empty() {
+        "Sin álbum".to_string()
+    } else {
+        tag_album
+    };
     let album_artist = if tag_album_artist.is_empty() {
         artist.clone()
     } else {
@@ -296,7 +356,10 @@ fn read_track(
     let path_string = path.to_string_lossy().to_string();
     let id = paths::stable_id("track", &path_string);
     let album_artist_key = fold(&album_artist);
-    let album_id = paths::stable_id("album", &format!("{album_artist_key}\u{1f}{}", fold(&album)));
+    let album_id = paths::stable_id(
+        "album",
+        &format!("{album_artist_key}\u{1f}{}", fold(&album)),
+    );
     let artist_id = paths::stable_id("artist", &fold(&artist));
     let added_at = fs::metadata(path)
         .and_then(|m| m.modified())
@@ -312,13 +375,7 @@ fn read_track(
 
     let (cover_url, accent, accent2) = cover
         .map(|c| (c.url, c.accent, c.accent2))
-        .unwrap_or_else(|| {
-            (
-                String::new(),
-                "#ffa094".to_string(),
-                "#80e5d2".to_string(),
-            )
-        });
+        .unwrap_or_else(|| (String::new(), "#ffa094".to_string(), "#80e5d2".to_string()));
 
     Some(Track {
         id,
@@ -369,7 +426,14 @@ fn cover_for(
 
     let mut result = None;
     let names = [
-        "cover", "folder", "front", "album", "artwork", "portada", "caratula", "carátula",
+        "cover",
+        "folder",
+        "front",
+        "album",
+        "artwork",
+        "portada",
+        "caratula",
+        "carátula",
     ];
     let extensions = ["jpg", "jpeg", "png", "webp", "avif"];
     'outer: for name in names {

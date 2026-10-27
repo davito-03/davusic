@@ -49,7 +49,11 @@ fn rgb_to_hsv(c: Rgb) -> Hsv {
     }
     Hsv {
         h,
-        s: if max <= f64::EPSILON { 0.0 } else { delta / max },
+        s: if max <= f64::EPSILON {
+            0.0
+        } else {
+            delta / max
+        },
         v: max,
     }
 }
@@ -165,7 +169,10 @@ fn pick_accent(clusters: &[Cluster], skip_hue: Option<f64>) -> Option<Cluster> {
         .iter()
         .copied()
         .filter(|c| c.count > 0.004 && c.s > 0.16 && c.v > 0.12 && c.v < 0.96)
-        .filter(|c| match skip_hue { Some(h) => hue_distance(c.h, h) > 42.0, None => true })
+        .filter(|c| match skip_hue {
+            Some(h) => hue_distance(c.h, h) > 42.0,
+            None => true,
+        })
         .map(|c| {
             let hue_penalty = if (20.0..45.0).contains(&c.h) || c.h > 345.0 {
                 0.85

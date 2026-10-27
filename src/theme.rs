@@ -96,7 +96,12 @@ fn collect_images(root: &Path) -> Vec<PathBuf> {
             .unwrap_or_default()
             .to_string_lossy()
             .to_lowercase()
-            .cmp(&b.file_name().unwrap_or_default().to_string_lossy().to_lowercase())
+            .cmp(
+                &b.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_lowercase(),
+            )
     });
     images
 }
@@ -131,8 +136,7 @@ pub fn discover(
             themes: Vec::new(),
             folder: String::new(),
             scanned: 0,
-            message: "No encontré una carpeta de wallpapers. Elige una para crear temas."
-                .into(),
+            message: "No encontré una carpeta de wallpapers. Elige una para crear temas.".into(),
         };
     };
 
@@ -171,7 +175,8 @@ pub fn discover(
         let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
         if !force {
             if let Some(entry) = cache.entries.get(&key) {
-                if entry.mtime == mtime && entry.size == size && preview_exists(paths, &entry.theme) {
+                if entry.mtime == mtime && entry.size == size && preview_exists(paths, &entry.theme)
+                {
                     themes.push(entry.theme.clone());
                     emit_progress(app, index + 1, total, path);
                     continue;
@@ -287,8 +292,17 @@ fn theme_name(path: &Path) -> String {
             !w.chars().all(|c| c.is_ascii_digit())
                 && !matches!(
                     w.as_str(),
-                    "konachan" | "com" | "rating" | "questionable" | "safe" | "landscape"
-                        | "wallpaper" | "random" | "image" | "img" | "www"
+                    "konachan"
+                        | "com"
+                        | "rating"
+                        | "questionable"
+                        | "safe"
+                        | "landscape"
+                        | "wallpaper"
+                        | "random"
+                        | "image"
+                        | "img"
+                        | "www"
                 )
         })
         .take(4)

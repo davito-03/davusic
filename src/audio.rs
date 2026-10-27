@@ -66,7 +66,10 @@ impl AudioHandle {
         self.simple(|reply| AudioCmd::Stop(reply))
     }
 
-    fn simple(&self, make: impl FnOnce(Sender<Result<(), String>>) -> AudioCmd) -> Result<(), String> {
+    fn simple(
+        &self,
+        make: impl FnOnce(Sender<Result<(), String>>) -> AudioCmd,
+    ) -> Result<(), String> {
         let (tx, rx) = mpsc::channel();
         self.tx
             .send(make(tx))
@@ -78,7 +81,10 @@ impl AudioHandle {
     pub fn seek(&self, position: f64) -> Result<(), String> {
         let (tx, rx) = mpsc::channel();
         self.tx
-            .send(AudioCmd::Seek { position, reply: tx })
+            .send(AudioCmd::Seek {
+                position,
+                reply: tx,
+            })
             .map_err(|_| "El motor de audio no está disponible.".to_string())?;
         rx.recv_timeout(Duration::from_secs(6))
             .map_err(|_| "El motor de audio no respondió.".to_string())?
@@ -98,8 +104,7 @@ impl AudioHandle {
         if self.tx.send(AudioCmd::Query(tx)).is_err() {
             return PlayerSnapshot::default();
         }
-        rx.recv_timeout(Duration::from_secs(2))
-            .unwrap_or_default()
+        rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default()
     }
 }
 
@@ -167,10 +172,7 @@ fn audio_loop(app: AppHandle, paths: Paths, rx: Receiver<AudioCmd>) {
                         let _ = reply.send(Ok(duration));
                     }
                     Err(error) => {
-                        let _ = app.emit(
-                            "playback-error",
-                            serde_json::json!({ "message": error }),
-                        );
+                        let _ = app.emit("playback-error", serde_json::json!({ "message": error }));
                         let _ = reply.send(Err(error));
                     }
                 }

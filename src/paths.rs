@@ -108,7 +108,12 @@ impl Paths {
     /// una migración posterior no vuelva a introducir datos antiguos.
     pub fn legacy_dirs(&self) -> Vec<PathBuf> {
         let mut out = Vec::new();
-        for root in [&self.config_dir, &self.cache_dir, &self.data_dir, &self.webview_data_dir] {
+        for root in [
+            &self.config_dir,
+            &self.cache_dir,
+            &self.data_dir,
+            &self.webview_data_dir,
+        ] {
             if let Some(parent) = root.parent() {
                 let name = root
                     .file_name()
@@ -201,8 +206,22 @@ pub fn audio_extension(path: &Path) -> bool {
         .to_ascii_lowercase();
     matches!(
         ext.as_str(),
-        "mp3" | "flac" | "ogg" | "oga" | "opus" | "m4a" | "mp4" | "aac" | "wav" | "aiff"
-            | "aif" | "wv" | "ape" | "mpc" | "spx" | "mka"
+        "mp3"
+            | "flac"
+            | "ogg"
+            | "oga"
+            | "opus"
+            | "m4a"
+            | "mp4"
+            | "aac"
+            | "wav"
+            | "aiff"
+            | "aif"
+            | "wv"
+            | "ape"
+            | "mpc"
+            | "spx"
+            | "mka"
     )
 }
 

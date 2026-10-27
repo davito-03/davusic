@@ -27,21 +27,27 @@
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' data: blob: cover: http://cover.localhost wallpaper: http://wallpaper.localhost https://i.scdn.co https://mosaic.scdn.co https://*.scdn.co https://*.spotifycdn.com https://platform-lookaside.fbsbx.com https://i.ytimg.com https://img.youtube.com https://yt3.ggpht.com https://*.googleusercontent.com; media-src 'self' data: blob:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'",
-      "capabilities": ["default"]
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage"],
+    "targets": [
+      "deb",
+      "appimage"
+    ],
     "icon": [
       "assets/icons/32x32.png",
       "assets/icons/128x128.png",
       "assets/icons/128x128@2x.png",
-      "assets/icons/icon.png"
+      "assets/icons/icon.png",
+      "assets/icons/icon.ico"
     ],
     "category": "Audio",
     "shortDescription": "Tu música, en tu PC.",
-    "longDescription": "Davusic es un reproductor de música nativo para Linux, local-first, sin anuncios y sin telemetría. Hecho para Niri, con el estilo de davito.dev.",
+    "longDescription": "Davusic es un reproductor de música nativo, local-first, sin anuncios y sin telemetría. Disponible para Linux y Windows, con una versión móvil experimental para Android.",
     "linux": {
       "deb": {
         "depends": []

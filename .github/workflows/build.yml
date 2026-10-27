@@ -1,0 +1,160 @@
+name: Compilaciones
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  TAURI_CLI_VERSION: 2.12.4
+
+jobs:
+  linux:
+    name: Linux · deb + AppImage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencias de Tauri/WebKitGTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev \
+            libfuse2 \
+            patchelf \
+            pkg-config \
+            file
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Instalar Tauri CLI
+        run: |
+          curl -sSL "https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v${TAURI_CLI_VERSION}/cargo-tauri-x86_64-unknown-linux-gnu.tgz" \
+            | tar -xz -C "$HOME/.cargo/bin"
+
+      - name: Tests
+        run: cargo test
+
+      - name: Compilar paquetes
+        run: cargo tauri build --bundles deb,appimage
+
+      - name: Guardar artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: davusic-linux
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    name: Windows · NSIS + MSI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Instalar Tauri CLI
+        shell: pwsh
+        run: |
+          $url = "https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v$env:TAURI_CLI_VERSION/cargo-tauri-x86_64-pc-windows-msvc.zip"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\cargo-tauri.zip"
+          Expand-Archive "$env:RUNNER_TEMP\cargo-tauri.zip" -DestinationPath "$env:USERPROFILE\.cargo\bin" -Force
+          "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Compilar instaladores
+        run: cargo tauri build
+
+      - name: Guardar artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: davusic-windows
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+  android:
+    name: Android · APK preview
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar plataforma, build-tools y NDK
+        run: |
+          sdkmanager --install "platforms;android-37" "build-tools;37.0.0" "ndk;27.0.12077973"
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Variables de Android
+        run: |
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: >-
+            aarch64-linux-android
+            armv7-linux-androideabi
+            i686-linux-android
+            x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Instalar Tauri CLI
+        run: |
+          curl -sSL "https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v${TAURI_CLI_VERSION}/cargo-tauri-x86_64-unknown-linux-gnu.tgz" \
+            | tar -xz -C "$HOME/.cargo/bin"
+
+      - name: Compilar APK de vista previa
+        run: cargo tauri android build --debug --apk --ci
+
+      - name: Preparar APK para la release
+        run: |
+          mkdir -p dist-android
+          apk="$(find gen/android/app/build/outputs/apk -name '*.apk' -print -quit)"
+          test -n "$apk"
+          cp "$apk" dist-android/davusic-android-preview.apk
+
+      - name: Guardar artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: davusic-android-preview
+          path: dist-android/*.apk
+          if-no-files-found: error
+
+  release:
+    name: Publicar release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, android]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Crear release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true

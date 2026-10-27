@@ -6,6 +6,8 @@
 
 const TAURI = window.__TAURI__ || null;
 const IS_TAURI = Boolean(TAURI && TAURI.core && TAURI.core.invoke);
+let IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+let MOBILE_PREVIEW = IS_TAURI && IS_MOBILE;
 const inv = (cmd, args) => TAURI.core.invoke(cmd, args);
 const onEvent = (name, cb) => (IS_TAURI && TAURI.event ? TAURI.event.listen(name, cb) : Promise.resolve(() => {}));
 const qs = (sel, root = document) => root.querySelector(sel);
@@ -744,7 +746,7 @@ function rebuildLibrary() {
   const local = state.local;
   const streamTracks = (state.stream.tracks || []).map((track) => normalizeTrack(track, 'stream'));
   state.stream.tracks = streamTracks;
-  const includeDemo = !IS_TAURI;
+  const includeDemo = !IS_TAURI || MOBILE_PREVIEW;
   const demoTracks = includeDemo ? demo.tracks : [];
   state.allTracks = [...demoTracks, ...local.tracks, ...streamTracks];
   const storedLyrics = state.ui.lyrics?.byId || {};
@@ -1020,7 +1022,6 @@ const browserAudio = (() => {
     },
   };
   audio.addEventListener('ended', () => {
-    if (IS_TAURI) return;
     handleTrackEnded();
   });
   return browser;
@@ -1051,7 +1052,21 @@ const nativeAudio = {
   async read() { return inv('get_player_state'); },
 };
 
-const engine = IS_TAURI ? nativeAudio : browserAudio;
+let activeEngine = null;
+const deviceAudio = {
+  load(track) {
+    activeEngine = track.source === 'demo' ? browserAudio : nativeAudio;
+    return activeEngine.load(track);
+  },
+  pause() { return (activeEngine || nativeAudio).pause(); },
+  resume() { return (activeEngine || nativeAudio).resume(); },
+  stop() { return (activeEngine || nativeAudio).stop(); },
+  seek(seconds) { return (activeEngine || nativeAudio).seek(seconds); },
+  volume(value) { return (activeEngine || nativeAudio).volume(value); },
+  read() { return (activeEngine || nativeAudio).read(); },
+};
+
+const engine = IS_TAURI ? deviceAudio : browserAudio;
 
 /* ---------- navegación ---------- */
 
@@ -7656,34 +7671,128 @@ function handleImportDownloadProgress(payload) {
 /* ---------- ventana y Tauri ---------- */
 
 function bindWindowControls() {
+  const titlebar = qs('#titlebar');
   const minimize = qs('#winMinimize');
   const maximize = qs('#winMaximize');
   const close = qs('#winClose');
+  const controls = [minimize, maximize, close].filter(Boolean);
+  const resizeHandles = qsa('.resize-handle');
+
+  const mobile = IS_MOBILE || document.body.classList.contains('is-mobile');
+  document.body.classList.toggle('is-mobile', mobile);
+
   if (!IS_TAURI) {
-    [minimize, maximize, close].forEach((btn) => { if (btn) btn.hidden = true; });
+    controls.forEach((btn) => { btn.hidden = true; });
+    resizeHandles.forEach((handle) => { handle.hidden = true; });
     return;
   }
   let win = null;
   try { win = TAURI.window?.getCurrentWindow?.(); } catch (_) {}
   if (!win) {
-    [minimize, maximize, close].forEach((btn) => { if (btn) btn.hidden = true; });
+    controls.forEach((btn) => { btn.hidden = true; });
+    resizeHandles.forEach((handle) => { handle.hidden = true; });
     return;
   }
-  minimize?.addEventListener('click', () => win.minimize().catch(() => {}));
-  maximize?.addEventListener('click', () => win.toggleMaximize().catch(() => {}));
-  close?.addEventListener('click', async () => {
-    await persistSession(true);
-    win.close().catch(() => {});
-  });
-  try {
-    win.onCloseRequested(async () => {
+
+  let closing = false;
+  let maximizing = false;
+  let resizeFrame = 0;
+  const maximizeIcon = maximize?.querySelector('use');
+
+  const applyMaximized = (maximized) => {
+    document.body.classList.toggle('is-maximized', maximized);
+    maximize?.classList.toggle('is-maximized', maximized);
+    maximize?.setAttribute('aria-pressed', String(maximized));
+    if (maximize) {
+      maximize.title = maximized ? 'Restaurar' : 'Maximizar';
+      maximize.setAttribute('aria-label', maximize.title);
+    }
+    maximizeIcon?.setAttribute('href', maximized ? '#i-restore-window' : '#i-square-window');
+  };
+
+  const syncWindowState = async () => {
+    try { applyMaximized(await win.isMaximized()); } catch (_) {}
+  };
+
+  const queueWindowStateSync = () => {
+    if (resizeFrame) return;
+    resizeFrame = window.requestAnimationFrame(() => {
+      resizeFrame = 0;
+      syncWindowState();
+    });
+  };
+
+  const toggleMaximize = async () => {
+    if (maximizing) return;
+    maximizing = true;
+    try {
+      await win.toggleMaximize();
+      await syncWindowState();
+    } catch (_) {
+      // El gestor de ventanas puede no soportar maximizar (por ejemplo, tiling puro).
+    } finally {
+      maximizing = false;
+    }
+  };
+
+  const requestClose = async () => {
+    if (closing) return;
+    closing = true;
+    try {
       await persistSession(true);
+    } catch (_) {}
+    try {
+      await win.destroy();
+    } catch (_) {
+      closing = false;
+    }
+  };
+
+  minimize?.addEventListener('click', () => win.minimize().catch(() => {}));
+  maximize?.addEventListener('click', toggleMaximize);
+  close?.addEventListener('click', requestClose);
+
+  // El doble clic en una barra personalizada no lo resuelve el sistema:
+  // se implementa junto al arrastre manual para que funcione en Wayland y Windows.
+  if (!mobile) {
+    titlebar?.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest('.titlebar__actions, button, a, input, select, textarea, [data-no-drag]')) return;
+      if (event.detail === 2) {
+        event.preventDefault();
+        toggleMaximize();
+        return;
+      }
+      win.startDragging().catch(() => {});
+    });
+  }
+
+  resizeHandles.forEach((handle) => {
+    handle.addEventListener('mousedown', (event) => {
+      if (event.button !== 0 || mobile) return;
+      event.preventDefault();
+      win.startResizeDragging(handle.dataset.resize).catch(() => {});
+    });
+  });
+
+  try {
+    win.onResized(queueWindowStateSync);
+  } catch (_) {}
+
+  try {
+    win.onCloseRequested(async (event) => {
+      if (closing) return;
+      event?.preventDefault?.();
+      await requestClose();
     });
   } catch (_) {}
+
   window.addEventListener('beforeunload', () => {
     if (state.ui.factoryResetting) return;
     persistSession(false);
   });
+
+  syncWindowState();
 }
 
 function bindNativeDragDrop() {
@@ -8075,7 +8184,7 @@ function hydrateState() {
 }
 
 async function loadDemo() {
-  if (IS_TAURI) {
+  if (IS_TAURI && !MOBILE_PREVIEW) {
     state.demo = { tracks: [], albums: [], artists: [], playlists: [], moods: [] };
     rebuildLibrary();
     return true;
@@ -8097,6 +8206,17 @@ async function boot() {
     hydrateState();
     applyPrefs();
     document.body.classList.add(IS_TAURI ? 'is-tauri' : 'is-browser');
+    if (IS_TAURI) {
+      try {
+        state.runtime = await inv('get_platform_info');
+        if (state.runtime?.mobile) {
+          IS_MOBILE = true;
+          MOBILE_PREVIEW = true;
+          document.body.classList.add('is-mobile');
+        }
+      } catch (_) {}
+    }
+    if (IS_MOBILE) document.body.classList.add('is-mobile');
     bindUI();
 
     if (IS_TAURI) {
@@ -8146,6 +8266,9 @@ async function boot() {
 
     if (!IS_TAURI && !demoLoaded) {
       toast('No se pudo cargar la vista previa. Abre la app de escritorio para importar tu música.', 'bell', 5200);
+    }
+    if (state.runtime?.mobile) {
+      toast('Davusic para Android está en vista previa: la demo suena, pero la biblioteca local y el streaming llegarán en una próxima versión.', 'shield', 7600);
     }
 
     if (IS_TAURI) {

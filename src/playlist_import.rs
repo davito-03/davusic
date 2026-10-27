@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::Command;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -137,7 +136,6 @@ pub fn save_exportify_csv(path: &Path, playlist: &ExportPlaylist) -> Result<(), 
     write_exportify_csv(path, playlist)
 }
 
-
 pub fn parse_file(path: &Path) -> Result<ImportBundle, String> {
     if !path.is_file() {
         return Err(format!("No existe el archivo: {}", path.display()));
@@ -155,7 +153,8 @@ pub fn parse_file(path: &Path) -> Result<ImportBundle, String> {
     let mut bundle = if extension == "zip" {
         parse_zip(path)?
     } else {
-        let bytes = fs::read(path).map_err(|error| format!("No se pudo leer el archivo: {error}"))?;
+        let bytes =
+            fs::read(path).map_err(|error| format!("No se pudo leer el archivo: {error}"))?;
         let content = String::from_utf8_lossy(&bytes);
         let playlists = match extension.as_str() {
             "json" => parse_json(&content, &name, &name),
@@ -197,7 +196,10 @@ fn parse_zip(path: &Path) -> Result<ImportBundle, String> {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if !matches!(ext.as_str(), "csv" | "json" | "txt" | "m3u" | "m3u8" | "tsv") {
+        if !matches!(
+            ext.as_str(),
+            "csv" | "json" | "txt" | "m3u" | "m3u8" | "tsv"
+        ) {
             continue;
         }
         if entry.size() > 64 * 1024 * 1024 {
@@ -207,7 +209,11 @@ fn parse_zip(path: &Path) -> Result<ImportBundle, String> {
             continue;
         }
         let mut bytes = Vec::with_capacity(entry.size() as usize);
-        if entry.take(64 * 1024 * 1024).read_to_end(&mut bytes).is_err() {
+        if entry
+            .take(64 * 1024 * 1024)
+            .read_to_end(&mut bytes)
+            .is_err()
+        {
             continue;
         }
         let content = String::from_utf8_lossy(&bytes);
@@ -309,7 +315,10 @@ fn detect_source(content: &str, filename: &str) -> String {
     let lower = format!("{} {}", filename.to_lowercase(), sample.to_lowercase());
     if lower.contains("track uri") || lower.contains("spotify") || lower.contains("open.spotify") {
         "spotify".into()
-    } else if lower.contains("youtube") || lower.contains("video id") || lower.contains("music.youtube") {
+    } else if lower.contains("youtube")
+        || lower.contains("video id")
+        || lower.contains("music.youtube")
+    {
         "youtube".into()
     } else {
         "import".into()
@@ -399,26 +408,64 @@ fn parse_csv(content: &str, default_name: &str, filename: &str) -> Vec<ImportedP
     }
 
     let title_aliases = [
-        "track name", "song title", "video title", "title", "titulo", "nombre de la cancion",
-        "track", "song", "cancion", "name", "titre",
+        "track name",
+        "song title",
+        "video title",
+        "title",
+        "titulo",
+        "nombre de la cancion",
+        "track",
+        "song",
+        "cancion",
+        "name",
+        "titre",
     ];
     let artist_aliases = [
-        "artist name(s)", "artist name", "artist names", "artists", "artist", "artista",
-        "artistas", "artist(s)", "artista(s)", "artists names", "album artist",
-        "channel", "channel name", "uploader",
+        "artist name(s)",
+        "artist name",
+        "artist names",
+        "artists",
+        "artist",
+        "artista",
+        "artistas",
+        "artist(s)",
+        "artista(s)",
+        "artists names",
+        "album artist",
+        "channel",
+        "channel name",
+        "uploader",
     ];
     let album_aliases = ["album name", "album", "album title", "album names"];
     let duration_aliases = [
-        "duration (ms)", "duration ms", "duration_ms", "duration", "duracion",
-        "duration (seconds)", "length", "time",
+        "duration (ms)",
+        "duration ms",
+        "duration_ms",
+        "duration",
+        "duracion",
+        "duration (seconds)",
+        "length",
+        "time",
     ];
     let playlist_aliases = [
-        "playlist name", "playlist", "lista de reproduccion", "nombre de la lista de reproduccion",
-        "playlist title", "nombre de la lista", "playlist names",
+        "playlist name",
+        "playlist",
+        "lista de reproduccion",
+        "nombre de la lista de reproduccion",
+        "playlist title",
+        "nombre de la lista",
+        "playlist names",
     ];
     let uri_aliases = [
-        "track uri", "spotify track uri", "uri", "url", "video id", "video_id", "videoid",
-        "id", "song uri",
+        "track uri",
+        "spotify track uri",
+        "uri",
+        "url",
+        "video id",
+        "video_id",
+        "videoid",
+        "id",
+        "song uri",
     ];
 
     let first = &records[0];
@@ -428,7 +475,8 @@ fn parse_csv(content: &str, default_name: &str, filename: &str) -> Vec<ImportedP
     let artist_idx = find_column_excluding(first, &artist_aliases, &[playlist_idx, title_idx]);
     let album_idx = find_column_excluding(first, &album_aliases, &[playlist_idx, title_idx]);
     let duration_idx = find_column(first, &duration_aliases);
-    let has_header = title_idx.is_some() || (artist_idx.is_some() && album_idx.is_some()) || uri_idx.is_some();
+    let has_header =
+        title_idx.is_some() || (artist_idx.is_some() && album_idx.is_some()) || uri_idx.is_some();
     let title_idx = title_idx.or(if has_header { None } else { Some(0) });
     let ms_header = first
         .get(duration_idx.unwrap_or(usize::MAX))
@@ -691,12 +739,20 @@ fn split_imported_line(value: &str) -> (String, String, String) {
     let line = value.trim();
     for separator in [" · ", " • ", " | "] {
         if let Some((left, right)) = line.split_once(separator) {
-            return (left.trim().to_string(), right.trim().to_string(), String::new());
+            return (
+                left.trim().to_string(),
+                right.trim().to_string(),
+                String::new(),
+            );
         }
     }
     for separator in [" – ", " — ", " - "] {
         if let Some((left, right)) = line.split_once(separator) {
-            return (right.trim().to_string(), left.trim().to_string(), String::new());
+            return (
+                right.trim().to_string(),
+                left.trim().to_string(),
+                String::new(),
+            );
         }
     }
     if line.contains('\t') {
@@ -747,7 +803,10 @@ fn parse_json(content: &str, default_name: &str, filename: &str) -> Vec<Imported
 fn collect_json_playlists(value: &Value, default_name: &str, out: &mut Vec<ImportedPlaylist>) {
     match value {
         Value::Array(items) => {
-            if items.iter().any(|item| playlist_object_name(item).is_some()) {
+            if items
+                .iter()
+                .any(|item| playlist_object_name(item).is_some())
+            {
                 for item in items {
                     if let Some(playlist) = parse_json_playlist(item, default_name) {
                         out.push(playlist);
@@ -842,7 +901,15 @@ fn json_track_list(value: &Value) -> Option<Vec<ImportedTrack>> {
         }
         let title = json_string(
             object,
-            &["trackName", "track_name", "title", "name", "songTitle", "song", "label"],
+            &[
+                "trackName",
+                "track_name",
+                "title",
+                "name",
+                "songTitle",
+                "song",
+                "label",
+            ],
         );
         let Some(title) = title else {
             continue;
@@ -853,7 +920,13 @@ fn json_track_list(value: &Value) -> Option<Vec<ImportedTrack>> {
         let artist = json_artist(object);
         let album = json_string(
             object,
-            &["albumName", "album_name", "album", "albumTitle", "release_name"],
+            &[
+                "albumName",
+                "album_name",
+                "album",
+                "albumTitle",
+                "release_name",
+            ],
         )
         .unwrap_or_default();
         let duration_raw = json_number(
@@ -933,7 +1006,14 @@ fn json_artist(value: &Value) -> String {
         Some(object) => object,
         None => return String::new(),
     };
-    for key in ["artistName", "artist_name", "artist", "artists", "subtitle", "albumArtist"] {
+    for key in [
+        "artistName",
+        "artist_name",
+        "artist",
+        "artists",
+        "subtitle",
+        "albumArtist",
+    ] {
         let Some(artist) = object.get(key) else {
             continue;
         };
@@ -966,21 +1046,23 @@ pub fn spotify_from_url(url: &str) -> Result<ImportBundle, String> {
     let id = extract_spotify_playlist_id(url)
         .ok_or_else(|| "No reconozco ese enlace de playlist de Spotify.".to_string())?;
     let embed = format!("https://open.spotify.com/embed/playlist/{id}");
-    let output = Command::new("curl")
-        .args([
-            "-sL",
-            "--max-time",
-            "30",
-            "-A",
+    let client = crate::net::blocking_client_builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent(
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36",
-            &embed,
-        ])
-        .output()
+        )
+        .build()
+        .map_err(|error| format!("No se pudo preparar la consulta a Spotify: {error}"))?;
+    let response = client
+        .get(&embed)
+        .send()
         .map_err(|error| format!("No se pudo consultar Spotify: {error}"))?;
-    if !output.status.success() {
+    if !response.status().is_success() {
         return Err("Spotify no respondió. Comprueba el enlace o usa un ZIP de Exportify.".into());
     }
-    let html = String::from_utf8_lossy(&output.stdout);
+    let html = response
+        .text()
+        .map_err(|error| format!("No se pudo leer la respuesta de Spotify: {error}"))?;
     if html.len() < 1000 {
         return Err("Spotify devolvió una página vacía. Prueba con un ZIP exportado.".into());
     }
@@ -1025,10 +1107,7 @@ pub fn spotify_from_url(url: &str) -> Result<ImportBundle, String> {
             .unwrap_or("")
             .trim()
             .to_string();
-        let duration_ms = item
-            .get("duration")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
+        let duration_ms = item.get("duration").and_then(Value::as_f64).unwrap_or(0.0);
         let uri = item
             .get("uri")
             .and_then(Value::as_str)
@@ -1142,9 +1221,18 @@ mod tests {
         assert_eq!(bundle.playlists.len(), 1);
         let tracks = &bundle.playlists[0].tracks;
         assert_eq!(tracks.len(), 3);
-        assert_eq!((tracks[0].artist.as_str(), tracks[0].title.as_str()), ("Lúa", "Bajamar"));
-        assert_eq!((tracks[1].artist.as_str(), tracks[1].title.as_str()), ("Lúa", "Sal y miel"));
-        assert_eq!((tracks[2].artist.as_str(), tracks[2].title.as_str()), ("Vera Nox", "Cromo"));
+        assert_eq!(
+            (tracks[0].artist.as_str(), tracks[0].title.as_str()),
+            ("Lúa", "Bajamar")
+        );
+        assert_eq!(
+            (tracks[1].artist.as_str(), tracks[1].title.as_str()),
+            ("Lúa", "Sal y miel")
+        );
+        assert_eq!(
+            (tracks[2].artist.as_str(), tracks[2].title.as_str()),
+            ("Vera Nox", "Cromo")
+        );
     }
 
     #[test]
@@ -1163,13 +1251,17 @@ mod tests {
 
     #[test]
     fn csv_groups_youtube_takeout_playlists() {
-        let content = "Playlist Name,Track Name,Artist Name,Album Name,Track Duration (ms),Video ID\n\
+        let content =
+            "Playlist Name,Track Name,Artist Name,Album Name,Track Duration (ms),Video ID\n\
 Noche,Vía 88,Nocturno 88,Autopista,78000,dQw4w9WgXcQ\n\
 Noche,Cromo,Vera Nox,Neón,64000,aaaaaaaaaaa\n\
 Día,Bajamar,Lúa,Mareas,88000,bbbbbbbbbbb\n";
         let playlists = parse_csv(content, "Takeout", "playlist.csv");
         assert_eq!(playlists.len(), 2);
-        let night = playlists.iter().find(|playlist| playlist.name == "Noche").unwrap();
+        let night = playlists
+            .iter()
+            .find(|playlist| playlist.name == "Noche")
+            .unwrap();
         assert_eq!(night.tracks.len(), 2);
         assert_eq!(night.tracks[0].duration, 78.0);
         assert_eq!(night.source, "youtube");
@@ -1199,10 +1291,8 @@ Noche,dQw4w9WgXcQ,Nocturno 88\n";
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
             .unwrap_or(0);
-        let root = std::env::temp_dir().join(format!(
-            "davusic-zip-test-{}-{stamp}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("davusic-zip-test-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("exportify.zip");
         let file = std::fs::File::create(&path).unwrap();

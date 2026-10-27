@@ -1,10 +1,10 @@
 # Davusic
 
-**Tu música, en tu PC.** Reproductor de escritorio nativo, local-first y en español para Linux. Combina tu biblioteca local, búsqueda y streaming de YouTube mediante `yt-dlp`, letras de LRCLIB e importación de playlists de Spotify, YouTube Music y **Exportify**.
+**Tu música, en tu equipo.** Reproductor nativo, local-first y en español para Linux y Windows, con una versión Android en vista previa. Combina tu biblioteca local, búsqueda y streaming de YouTube mediante `yt-dlp`, letras de LRCLIB e importación de playlists de Spotify, YouTube Music y **Exportify**.
 
 Davusic está hecho con **Tauri 2 + Rust** y un frontend estático sin bundler. No hay anuncios, telemetría ni servidor propio. La cuenta de Spotify es opcional y **solo se usa para leer metadatos**: Davusic no reproduce el catálogo de Spotify ni elude DRM.
 
-> Estado: **0.1.0**, primera versión funcional y usable. Pensado para Niri/DMS en CachyOS, pero funciona en cualquier escritorio Linux moderno con Wayland o X11. Incluye restablecimiento de fábrica y exportación compatible con Exportify.
+> Estado: **0.1.0**, primera versión funcional. Pensada para Niri/DMS en CachyOS, pero funciona en cualquier escritorio Linux moderno con Wayland o X11 y en Windows 10/11. Android se distribuye como vista previa: interfaz y demo, sin biblioteca local, streaming ni MPRIS. Incluye restablecimiento de fábrica y exportación compatible con Exportify.
 
 ---
 
@@ -35,24 +35,38 @@ Davusic está hecho con **Tauri 2 + Rust** y un frontend estático sin bundler. 
 - **Restablecimiento de fábrica**: borra biblioteca indexada, playlists, likes, historial, señales del algoritmo, preferencias, sesión de Spotify y cachés en un solo paso, conservando tus archivos de música y `yt-dlp`.
 - **Temas y personalización**: Nocturno, Neón/Cyberpunk, Matrix, Ember y Claro; seis acentos; animaciones reducibles; fuentes del sistema o TTF/OTF/WOFF propios; perfil y portadas locales.
 - **Sesión**: guarda cola, pista y posición al cerrar, y las restaura en pausa al abrir.
-- **MPRIS**: controles multimedia, metadatos, carátula, volumen y búsqueda de posición.
+- **MPRIS en Linux**: controles multimedia, metadatos, carátula, volumen y búsqueda de posición. En Windows se usa el reproductor nativo sin MPRIS.
+- **Multiplataforma**: mismo código Tauri para Linux y Windows; Android se prepara como vista previa experimental.
 
 ## Requisitos
 
-### Ejecutar
+### Ejecutar en Linux
 
-- Linux con PipeWire o PulseAudio y ALSA.
+- PipeWire o PulseAudio y ALSA.
 - `yt-dlp` para buscar y streamear en YouTube. Davusic puede instalarlo bajo demanda en `~/.local/share/davusic/bin/`.
 - `curl` o `wget` para esa instalación.
 - Opcional: `ffmpeg` si quieres convertir audio; el streaming no lo necesita.
 
+### Ejecutar en Windows
+
+- Windows 10/11 con WebView2. Los instaladores incluyen el bootstrapper.
+- `yt-dlp.exe` para streaming. Davusic puede instalarlo bajo demanda en `%LOCALAPPDATA%\davusic\bin\`.
+- Opcional: `ffmpeg.exe` en `PATH` o junto a `yt-dlp.exe`.
+
+### Android
+
+Vista previa para Android 7.0 (API 24) o superior. Incluye la interfaz y una
+biblioteca de demostración; todavía no importa música local, no ejecuta
+`yt-dlp` y no expone MPRIS. Consulta [BUILDING.md](BUILDING.md) para compilarla.
+
 ### Compilar en Arch/CachyOS
 
 ```bash
-sudo pacman -S --needed base-devel rust webkit2gtk-4.1 gtk3 librsvg pkgconf
+sudo pacman -S --needed base-devel rust webkit2gtk-4.1 gtk3 librsvg pkgconf alsa-lib
 ```
 
-Tauri usa GTK/WebKitGTK. En otras distribuciones consulta los paquetes equivalentes de Tauri 2. El proyecto declara Rust 1.95 o superior.
+Tauri usa GTK/WebKitGTK. En otras distribuciones consulta los paquetes
+equivalentes de Tauri 2. El proyecto declara Rust 1.95 o superior.
 
 ## Compilar y ejecutar
 
@@ -61,7 +75,8 @@ cargo build --release
 ./target/release/davusic
 ```
 
-Para desarrollo no hace falta Node, bundler ni servidor de desarrollo: el frontend estático se embebe en el binario.
+Para desarrollo no hace falta Node, bundler ni servidor de desarrollo: el
+frontend estático se embebe en el binario.
 
 ```bash
 cargo build
@@ -75,27 +90,42 @@ cargo test
 node --check frontend/app.js
 ```
 
+Instrucciones detalladas para Linux, Windows y Android: [BUILDING.md](BUILDING.md).
+
 ## Instalar en tu usuario
+
+### Linux
 
 ```bash
 ./scripts/install.sh
 ```
 
-El instalador compila en modo release si el binario no existe o si alguna fuente es más nueva, y coloca:
+El instalador compila en modo release si el binario no existe o si alguna fuente
+es más nueva, y coloca:
 
 - binario: `~/.local/bin/davusic`
 - lanzador: `~/.local/share/applications/davusic.desktop`
 - icono: `~/.local/share/icons/hicolor/512x512/apps/io.github.davo.davusic.png`
 - regla opcional de Niri: `~/.config/niri/davusic.kdl` (solo si existe `~/.config/niri`)
 
-Después puedes abrirlo desde el menú de aplicaciones o ejecutando `davusic`.
-
 También puedes generar paquetes `.deb` y AppImage con Tauri CLI:
 
 ```bash
-cargo install tauri-cli --locked
-cargo tauri build
+cargo tauri build --bundles deb,appimage
 ```
+
+### Windows
+
+Descarga el instalador NSIS (`.exe`) o MSI (`.msi`) desde
+[Releases](https://github.com/davito-03/davusic/releases). Los instaladores no
+están firmados con un certificado comercial; SmartScreen puede pedir
+confirmación.
+
+### Android
+
+Descarga `davusic-android-preview.apk` desde Releases. Es una APK de vista
+previa firmada en modo debug: se instala, pero no sirve para Google Play y no
+sustituye a la versión de escritorio.
 
 ## Uso rápido
 
@@ -165,27 +195,22 @@ La API oficial limita las páginas a 50 elementos. Davusic intenta primero `/pla
 
 ## Streaming y caché
 
-`yt-dlp` resuelve el audio de YouTube y lo deja en `~/.cache/davusic/streams/`. Davusic conserva como máximo **80 archivos / 2 GB** y elimina los más antiguos. La URI canónica se guarda en el catálogo, no la ruta de caché, así que la poda no rompe la reproducción.
+`yt-dlp` resuelve el audio de YouTube y lo deja en la caché de Davusic (`~/.cache/davusic/streams/` en Linux, `%LOCALAPPDATA%\davusic\streams\` en Windows). Davusic conserva como máximo **80 archivos / 2 GB** y elimina los más antiguos. La URI canónica se guarda en el catálogo, no la ruta de caché, así que la poda no rompe la reproducción.
 
-El catálogo de streaming y las playlists de usuario se guardan en:
-
-- `~/.config/davusic/streams.json`
-- `~/.config/davusic/playlists.json`
-
-Las preferencias pequeñas, likes, recientes, señales, letras en localStorage y el perfil viven en el WebView. El catálogo grande no cabe en `localStorage` y por eso se escribe directamente en disco.
+El catálogo de streaming y las playlists de usuario se guardan en `streams.json` y `playlists.json`, dentro de la carpeta de configuración de cada plataforma. Las preferencias pequeñas, likes, recientes, señales, letras en localStorage y el perfil viven en el WebView. El catálogo grande no cabe en `localStorage` y por eso se escribe directamente en disco.
 
 ## Datos y privacidad
 
-| Dato | Ubicación |
-| --- | --- |
-| Configuración y catálogo | `~/.config/davusic/` |
-| Sesión opcional de Spotify | `~/.config/davusic/spotify.json` (permisos `0600`) |
-| Sesión de reproducción | `~/.config/davusic/session.json` |
-| Carátulas, temas y audio de la demo | `~/.cache/davusic/` |
-| Caché de streaming y letras | `~/.cache/davusic/streams/` y `~/.cache/davusic/lyrics/` |
-| yt-dlp instalado por Davusic | `~/.local/share/davusic/bin/yt-dlp` |
-| Preferencias, likes, recientes, señales y perfil | `localStorage` del WebView |
-| Datos del WebView | `~/.local/share/io.github.davo.davusic/` |
+| Dato | Linux | Windows |
+| --- | --- | --- |
+| Configuración y catálogo | `~/.config/davusic/` | `%APPDATA%\davusic\` |
+| Sesión opcional de Spotify | `~/.config/davusic/spotify.json` (`0600`) | `%APPDATA%\davusic\spotify.json` |
+| Sesión de reproducción | `~/.config/davusic/session.json` | `%APPDATA%\davusic\session.json` |
+| Carátulas, temas y demo | `~/.cache/davusic/` | `%LOCALAPPDATA%\davusic\` |
+| Caché de streaming y letras | `~/.cache/davusic/streams/`, `lyrics/` | `%LOCALAPPDATA%\davusic\streams\`, `lyrics\` |
+| `yt-dlp` instalado por Davusic | `~/.local/share/davusic/bin/yt-dlp` | `%LOCALAPPDATA%\davusic\bin\yt-dlp.exe` |
+| Preferencias, likes, recientes, señales y perfil | `localStorage` del WebView | `localStorage` del WebView |
+| Datos del WebView | `~/.local/share/io.github.davo.davusic/` | `%LOCALAPPDATA%\io.github.davo.davusic\` |
 
 No hay telemetría. Las búsquedas y la reproducción en streaming contactan con YouTube; las letras con LRCLIB; las carátulas con los CDN de Spotify/YouTube. La API de Spotify solo se usa si conectas tu cuenta. Davusic nunca lee cookies ni tokens de otras aplicaciones.
 
@@ -193,14 +218,20 @@ La primera vez, Davusic copia la configuración de instalaciones anteriores si e
 
 ## Publicar en GitHub
 
-El árbol está preparado para un repositorio público: `target/`, logs, `gen/schemas` y datos locales están excluidos por `.gitignore`, la licencia es MIT y el frontend no necesita Node ni un servidor de desarrollo. El repositorio local ya está inicializado en `main` con el primer commit; solo falta el remoto.
+El repositorio oficial es [davito-03/davusic](https://github.com/davito-03/davusic). El árbol excluye `target/`, logs, `gen/schemas` y datos locales; la licencia es MIT y el frontend no necesita Node ni un servidor de desarrollo.
+
+`main` contiene el código y los workflows:
+
+- `.github/workflows/ci.yml` ejecuta tests, sintaxis del frontend y build Linux.
+- `.github/workflows/build.yml` compila Linux, Windows y Android y publica una release con todos los artefactos al empujar un tag `v*`.
 
 ```bash
-git remote add origin git@github.com:TU_USUARIO/davusic.git
-git push -u origin main
+git push origin main
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
-Antes de publicar, revisa `Cargo.toml`, `tauri.conf.json` y `assets/davusic.desktop` si vas a cambiar el identificador o el autor. El flujo de CI de `.github/workflows/ci.yml` compila, pasa los tests de Rust y comprueba la sintaxis del frontend en Ubuntu.
+La release incluye `.deb`, `.AppImage`, instaladores NSIS/MSI y `davusic-android-preview.apk`. Las compilaciones de Windows y Android se realizan en GitHub Actions, no en local.
 
 ## Atajos
 
@@ -224,7 +255,8 @@ Antes de publicar, revisa `Cargo.toml`, `tauri.conf.json` y `assets/davusic.desk
 
 ```text
 src/
-  main.rs            Comandos Tauri, protocolos, eventos y arranque
+  main.rs            Entrada de escritorio; llama a davusic_lib::run()
+  lib.rs             Comandos Tauri, protocolos, eventos y arranque compartido
   audio.rs           Motor nativo y demo embebida
   library.rs         Escaneo, carátulas e IDs de la biblioteca
   theme.rs           Temas fijos y utilidades de imagen
@@ -234,21 +266,27 @@ src/
   spotify.rs         OAuth PKCE, playlists y Me gusta
   youtube.rs         yt-dlp, búsqueda, streaming y caché
   lyrics.rs          LRCLIB
-  mpris.rs           Integración MPRIS
+  mpris.rs           Integración MPRIS (Linux)
+  mpris_stub.rs      Integración MPRIS no-op para otras plataformas
+  dialogs.rs         Diálogos nativos de archivos (stub en Android)
+  platform.rs        Abrir enlaces, revelar carpetas y detección de SO
+  net.rs             Cliente HTTP con rustls/ring
 frontend/
   index.html         Shell de la interfaz
   app.js             Estado, vistas, recomendaciones, importador y exportador
   styles.css         Diseño, temas y responsive
 assets/
-  icons/             Iconos de la aplicación
+  icons/             Iconos de la aplicación, incluido icon.ico
   fonts/             Fuentes embebidas
 scripts/
   install.sh         Instalación local y regla de Niri
   make-icon.sh       Generación del icono
   make-art.py        Portadas de demostración
   make-audio.py      Audio de demostración
+gen/android/         Proyecto Android generado y versionado
 .github/
-  workflows/ci.yml   Tests, sintaxis JS y build release
+  workflows/ci.yml   Tests, sintaxis JS y build Linux
+  workflows/build.yml Compilaciones Linux/Windows/Android y release
 ```
 
 ## Límites conocidos
@@ -260,6 +298,8 @@ scripts/
 - Exportify es un servicio externo: su disponibilidad y su flujo de inicio de sesión dependen de su proyecto, no de Davusic.
 - El restablecimiento de fábrica no borra archivos de música personales, descargas de `~/Music/Davusic/` ni `yt-dlp`; es deliberado para evitar pérdidas irreversibles.
 - La interfaz se prueba manualmente; no hay suite de tests de UI.
+- Android está en vista previa: no importa música local, no ejecuta `yt-dlp` y no tiene MPRIS. La demo sí se puede reproducir.
+- Los instaladores de Windows y la APK de vista previa no están firmados con certificados de distribución.
 
 ## Auditoría
 

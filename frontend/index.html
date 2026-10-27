@@ -65,6 +65,7 @@
   <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.2A8.6 8.6 0 0 1 9.8 3.5a8.6 8.6 0 1 0 10.7 10.7Z"/></symbol>
   <symbol id="i-minus-window" viewBox="0 0 12 12"><path d="M2 6h8"/></symbol>
   <symbol id="i-square-window" viewBox="0 0 12 12"><rect x="2.2" y="2.2" width="7.6" height="7.6" rx="1.3"/></symbol>
+  <symbol id="i-restore-window" viewBox="0 0 12 12"><rect x="4.1" y="1.9" width="6" height="6" rx="1.1"/><path d="M3.3 3.9h-.6a1 1 0 0 0-1 1v4.2a1 1 0 0 0 1 1h4.2a1 1 0 0 0 1-1v-.6"/></symbol>
   <symbol id="i-x-window" viewBox="0 0 12 12"><path d="m2.5 2.5 7 7M9.5 2.5l-7 7"/></symbol>
   <symbol id="i-waveform" viewBox="0 0 24 24"><path d="M2 12h2l2-6 3 12 2.5-15 3 18 2.5-12 2 5 2 2h3"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
@@ -84,13 +85,13 @@
     <div class="ambient__grain"></div>
   </div>
 
-  <header class="titlebar" data-tauri-drag-region>
-    <div class="titlebar__brand" data-tauri-drag-region>
-      <img class="titlebar__mark" src="assets/logo.png" alt="">
+  <header class="titlebar" id="titlebar">
+    <div class="titlebar__brand">
+      <img class="titlebar__mark" src="assets/logo.png" alt="" draggable="false">
       <span class="titlebar__wordmark">davusic</span>
       <span class="titlebar__edition">local // player</span>
     </div>
-    <div class="titlebar__center" data-tauri-drag-region>
+    <div class="titlebar__center">
       <span class="status-dot"></span>
       <span id="titlebarStatus">Biblioteca local</span>
     </div>
@@ -482,6 +483,16 @@
     <span id="scanText">Indexando tu música…</span>
     <div class="scan-indicator__bar"><span id="scanBar"></span></div>
   </div>
+</div>
+<div class="resize-handles" aria-hidden="true">
+  <span class="resize-handle resize-handle--n" data-resize="North"></span>
+  <span class="resize-handle resize-handle--s" data-resize="South"></span>
+  <span class="resize-handle resize-handle--e" data-resize="East"></span>
+  <span class="resize-handle resize-handle--w" data-resize="West"></span>
+  <span class="resize-handle resize-handle--ne" data-resize="NorthEast"></span>
+  <span class="resize-handle resize-handle--nw" data-resize="NorthWest"></span>
+  <span class="resize-handle resize-handle--se" data-resize="SouthEast"></span>
+  <span class="resize-handle resize-handle--sw" data-resize="SouthWest"></span>
 </div>
 <script type="module" src="app.js"></script>
 </body>

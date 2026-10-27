@@ -6,7 +6,8 @@ use std::process::Command;
 use serde_json::Value;
 
 use crate::models::{
-    DownloadRequest, ImportedTrack, MatchCandidate, OnlineTrack, PlaybackRequest, YoutubeToolsStatus,
+    DownloadRequest, ImportedTrack, MatchCandidate, OnlineTrack, PlaybackRequest,
+    YoutubeToolsStatus,
 };
 use crate::paths::{self, Paths};
 
@@ -23,7 +24,18 @@ pub fn download_dir(config: &crate::models::Config) -> PathBuf {
         .join("Davusic")
 }
 
+fn executable_name(name: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
 pub fn find_tool(paths: &Paths, name: &str) -> Option<PathBuf> {
+    if cfg!(target_os = "android") {
+        return None;
+    }
     let env_name = format!("DAVUSIC_{}", name.to_uppercase().replace('-', "_"));
     if let Ok(override_path) = std::env::var(env_name) {
         let path = PathBuf::from(override_path);
@@ -31,11 +43,13 @@ pub fn find_tool(paths: &Paths, name: &str) -> Option<PathBuf> {
             return Some(path);
         }
     }
+    let executable = executable_name(name);
     if name == "yt-dlp" {
-        let bundled = paths.tools.join("yt-dlp");
+        let bundled = paths.tools.join(&executable);
         if bundled.is_file() {
             return Some(bundled);
         }
+        #[cfg(target_os = "linux")]
         if let Some(home) = dirs::home_dir() {
             let candidate = home.join(".local/bin/yt-dlp");
             if candidate.is_file() {
@@ -43,8 +57,8 @@ pub fn find_tool(paths: &Paths, name: &str) -> Option<PathBuf> {
             }
         }
     }
-    if let Some(ffmpeg) = which(name) {
-        return Some(ffmpeg);
+    if let Some(tool) = which(&executable) {
+        return Some(tool);
     }
     None
 }
@@ -60,11 +74,18 @@ fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
+fn which_executable(name: &str) -> Option<PathBuf> {
+    which(&executable_name(name))
+}
+
 pub fn status(paths: &Paths, config: &crate::models::Config) -> YoutubeToolsStatus {
     let ytdlp = find_tool(paths, "yt-dlp");
     let ffmpeg = find_tool(paths, "ffmpeg");
-    let can_install = which("curl").is_some() || which("wget").is_some();
-    let message = if ytdlp.is_none() {
+    let can_install = !cfg!(target_os = "android")
+        && (which_executable("curl").is_some() || which_executable("wget").is_some());
+    let message = if cfg!(target_os = "android") {
+        "En Android, esta versión funciona sin streaming externo. yt-dlp no se puede ejecutar como binario."
+    } else if ytdlp.is_none() {
         "yt-dlp no está instalado. Puedes instalarlo desde aquí, sin permisos de administrador."
     } else if ffmpeg.is_none() {
         "yt-dlp está listo. ffmpeg es opcional; solo hace falta si quieres convertir descargas."
@@ -88,15 +109,27 @@ pub fn status(paths: &Paths, config: &crate::models::Config) -> YoutubeToolsStat
 }
 
 pub fn install_ytdlp(paths: &Paths) -> Result<String, String> {
+    if cfg!(target_os = "android") {
+        return Err(
+            "En Android no se pueden ejecutar binarios externos como yt-dlp. Esta versión funciona sin streaming."
+                .into(),
+        );
+    }
     fs::create_dir_all(&paths.tools)
         .map_err(|error| format!("No se pudo crear la carpeta de herramientas: {error}"))?;
-    let target = paths.tools.join("yt-dlp");
+    let target = paths.tools.join(executable_name("yt-dlp"));
     if target.is_file() {
         return Ok(target.to_string_lossy().to_string());
     }
     let tmp = paths.tools.join("yt-dlp.download");
-    let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
-    if which("curl").is_some() {
+    let url = if cfg!(target_os = "windows") {
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+    } else if cfg!(target_os = "macos") {
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
+    } else {
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+    };
+    if which_executable("curl").is_some() {
         let output = Command::new("curl")
             .args([
                 "-L",
@@ -120,7 +153,7 @@ pub fn install_ytdlp(paths: &Paths) -> Result<String, String> {
                 String::from_utf8_lossy(&output.stderr).trim()
             ));
         }
-    } else if which("wget").is_some() {
+    } else if which_executable("wget").is_some() {
         let output = Command::new("wget")
             .args(["-q", "-O"])
             .arg(&tmp)
@@ -145,8 +178,7 @@ pub fn install_ytdlp(paths: &Paths) -> Result<String, String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755));
     }
-    fs::rename(&tmp, &target)
-        .map_err(|error| format!("No se pudo activar yt-dlp: {error}"))?;
+    fs::rename(&tmp, &target).map_err(|error| format!("No se pudo activar yt-dlp: {error}"))?;
     Ok(target.to_string_lossy().to_string())
 }
 
@@ -321,7 +353,12 @@ fn split_title_artist(title: &str, channel: &str) -> (String, String) {
     (title.to_string(), String::new())
 }
 
-pub fn score_candidate(candidate: &MatchCandidate, title: &str, artist: &str, duration: f64) -> i64 {
+pub fn score_candidate(
+    candidate: &MatchCandidate,
+    title: &str,
+    artist: &str,
+    duration: f64,
+) -> i64 {
     let q_title = normalize(title);
     let q_artist = normalize(artist);
     let c_title = normalize(&candidate.title);
@@ -345,7 +382,8 @@ pub fn score_candidate(candidate: &MatchCandidate, title: &str, artist: &str, du
         }
     }
     if !q_artist.is_empty() {
-        if !c_channel.is_empty() && (c_channel.contains(&q_artist) || q_artist.contains(&c_channel)) {
+        if !c_channel.is_empty() && (c_channel.contains(&q_artist) || q_artist.contains(&c_channel))
+        {
             score += 26;
         }
         if c_title.contains(&q_artist) {
@@ -372,8 +410,16 @@ pub fn score_candidate(candidate: &MatchCandidate, title: &str, artist: &str, du
     let query_hint = format!("{} {}", title, artist).to_lowercase();
     let c_lower = candidate.title.to_lowercase();
     for bad in [
-        "cover", "karaoke", "instrumental", "nightcore", "sped up", "slowed", "reaction",
-        "tutorial", "8d audio", "bass boosted",
+        "cover",
+        "karaoke",
+        "instrumental",
+        "nightcore",
+        "sped up",
+        "slowed",
+        "reaction",
+        "tutorial",
+        "8d audio",
+        "bass boosted",
     ] {
         if c_lower.contains(bad) && !query_hint.contains(bad) {
             score -= 22;
@@ -434,7 +480,9 @@ fn normalize(value: &str) -> String {
         }
     }
     let mut cleaned = out.trim().to_string();
-    for word in ["feat", "ft", "official", "video", "audio", "lyrics", "lyric", "hd", "hq"] {
+    for word in [
+        "feat", "ft", "official", "video", "audio", "lyrics", "lyric", "hd", "hq",
+    ] {
         cleaned = cleaned.replace(&format!(" {word} "), " ");
         if cleaned.starts_with(&format!("{word} ")) {
             cleaned = cleaned[word.len() + 1..].to_string();
@@ -530,10 +578,7 @@ pub fn fetch_flat_playlist(url: &str) -> Result<(String, Vec<ImportedTrack>), St
             .trim_end_matches("VEVO")
             .trim()
             .to_string();
-        let duration = entry
-            .get("duration")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
+        let duration = entry.get("duration").and_then(Value::as_f64).unwrap_or(0.0);
         let (title, artist) = if artist.is_empty() {
             if let Some((artist, title)) = title.split_once(" - ") {
                 (title.trim().to_string(), artist.trim().to_string())
@@ -563,7 +608,8 @@ pub fn download_one(
     request: &DownloadRequest,
     dir: &Path,
 ) -> Result<PathBuf, String> {
-    fs::create_dir_all(dir).map_err(|error| format!("No se pudo crear la carpeta de descargas: {error}"))?;
+    fs::create_dir_all(dir)
+        .map_err(|error| format!("No se pudo crear la carpeta de descargas: {error}"))?;
     let bin = ytdlp(paths)?;
     let ffmpeg = find_tool(paths, "ffmpeg");
     let template = dir.join("%(title)s [%(id)s].%(ext)s");
@@ -619,12 +665,20 @@ pub fn download_one(
                     .and_then(|e| e.to_str())
                     .unwrap_or("")
                     .to_ascii_lowercase();
-                if !matches!(ext.as_str(), "mp3" | "m4a" | "opus" | "ogg" | "flac" | "webm") {
+                if !matches!(
+                    ext.as_str(),
+                    "mp3" | "m4a" | "opus" | "ogg" | "flac" | "webm"
+                ) {
                     continue;
                 }
                 let Ok(meta) = entry.metadata() else { continue };
-                let Ok(modified) = meta.modified() else { continue };
-                if newest.as_ref().is_none_or(|(current, _)| modified > *current) {
+                let Ok(modified) = meta.modified() else {
+                    continue;
+                };
+                if newest
+                    .as_ref()
+                    .is_none_or(|(current, _)| modified > *current)
+                {
                     newest = Some((modified, path));
                 }
             }
@@ -928,10 +982,7 @@ mod tests {
 
     #[test]
     fn extracts_youtube_ids_from_common_urls() {
-        assert_eq!(
-            video_id("dQw4w9WgXcQ").as_deref(),
-            Some("dQw4w9WgXcQ")
-        );
+        assert_eq!(video_id("dQw4w9WgXcQ").as_deref(), Some("dQw4w9WgXcQ"));
         assert_eq!(
             video_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=abc").as_deref(),
             Some("dQw4w9WgXcQ")
@@ -955,4 +1006,3 @@ mod tests {
         );
     }
 }
-

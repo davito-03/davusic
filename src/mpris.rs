@@ -200,9 +200,7 @@ async fn command_loop(rx: Receiver<MprisCmd>, player: Rc<Player>) {
                     metadata = metadata.art_url(art_url);
                 }
                 let _ = player.set_metadata(metadata.build()).await;
-                let _ = player
-                    .set_playback_status(PlaybackStatus::Playing)
-                    .await;
+                let _ = player.set_playback_status(PlaybackStatus::Playing).await;
             }
             MprisCmd::Status(playing) => {
                 let _ = player
@@ -221,9 +219,7 @@ async fn command_loop(rx: Receiver<MprisCmd>, player: Rc<Player>) {
             }
             MprisCmd::Clear => {
                 let _ = player.set_metadata(Metadata::new()).await;
-                let _ = player
-                    .set_playback_status(PlaybackStatus::Stopped)
-                    .await;
+                let _ = player.set_playback_status(PlaybackStatus::Stopped).await;
             }
         }
     }

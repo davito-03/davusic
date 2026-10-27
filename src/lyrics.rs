@@ -333,9 +333,8 @@ mod tests {
 
     #[test]
     fn parses_synced_lrc_with_repeated_stamps() {
-        let lines = parse_lrc(
-            "[ar:Lúa]\n[00:12.00]La marea deja su rumor\n[00:20.50][00:41.00]Bajamar\n",
-        );
+        let lines =
+            parse_lrc("[ar:Lúa]\n[00:12.00]La marea deja su rumor\n[00:20.50][00:41.00]Bajamar\n");
         assert_eq!(lines.len(), 3);
         assert!((lines[0].t - 12.0).abs() < 0.01);
         assert_eq!(lines[0].text, "La marea deja su rumor");

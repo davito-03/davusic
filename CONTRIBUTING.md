@@ -16,7 +16,7 @@ En Arch/CachyOS:
 sudo pacman -S --needed base-devel rust webkit2gtk-4.1 gtk3 librsvg pkgconf
 ```
 
-El proyecto requiere Rust 1.95 o superior. Para comprobar la sintaxis del frontend hace falta Node 20 o superior.
+El proyecto requiere Rust 1.95 o superior. Para comprobar la sintaxis del frontend hace falta Node 20 o superior. En Windows se necesita el toolchain MSVC y WebView2; para Android, JDK 17, SDK 37 y NDK 27. Las instrucciones completas están en [BUILDING.md](BUILDING.md).
 
 ## Desarrollo
 
@@ -29,12 +29,16 @@ node --check frontend/app.js
 
 No hay bundler ni servidor de desarrollo: `frontend/index.html`, `frontend/app.js` y `frontend/styles.css` se embeben en el binario. Después de tocar el frontend, vuelve a compilar para verlo en la app.
 
-Build release e instalación local:
+Build release e instalación local en Linux:
 
 ```bash
 cargo build --release
 ./scripts/install.sh
 ```
+
+En Windows, `cargo tauri build` genera los instaladores NSIS/MSI. En Android,
+la compilación se hace con `cargo tauri android build --apk --ci` (véase
+[BUILDING.md](BUILDING.md)).
 
 ## Estilo
 
@@ -70,4 +74,6 @@ node --check frontend/app.js
 cargo build --release
 ```
 
-La CI de GitHub ejecuta esos mismos pasos en Ubuntu.
+La CI de GitHub ejecuta esos mismos pasos en Ubuntu. El workflow de compilaciones
+(`.github/workflows/build.yml`) genera Linux, Windows y Android en runners nativos
+y publica una release con el tag `v*`.

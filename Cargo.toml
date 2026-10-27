@@ -7,6 +7,15 @@ edition = "2021"
 rust-version = "1.95"
 license = "MIT"
 
+[lib]
+name = "davusic_lib"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "davusic"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -19,16 +28,20 @@ walkdir = "2"
 lofty = "0.25"
 rodio = { version = "0.23", default-features = false, features = ["playback", "symphonia-all"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "avif", "bmp"] }
-rfd = "0.17"
 dirs = "6"
 parking_lot = "0.12"
-mpris-server = { version = "0.10", features = ["tokio"] }
-async-std = { version = "1", features = ["attributes", "unstable"] }
-tokio = { version = "1", features = ["sync", "time", "rt", "rt-multi-thread", "macros"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 csv = "1"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "form", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "form", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 sha2 = "0.10"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rfd = "0.17"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+mpris-server = { version = "0.10", features = ["tokio"] }
+async-std = { version = "1", features = ["attributes", "unstable"] }
 
 
 [profile.release]

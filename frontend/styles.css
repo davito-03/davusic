@@ -511,6 +511,8 @@ kbd {
   background: rgba(10, 9, 13, 0.28);
   position: relative;
   z-index: 120;
+  user-select: none;
+  -webkit-user-select: none;
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
@@ -520,6 +522,7 @@ kbd {
   align-items: center;
   gap: 9px;
   min-width: 0;
+  cursor: default;
 }
 .titlebar__mark {
   width: 19px;
@@ -575,7 +578,43 @@ kbd {
   transition: 160ms var(--ease-soft);
 }
 .window-btn:hover { color: var(--text); background: var(--surface); }
+.window-btn:active { transform: translateY(1px); }
 .window-btn--close:hover { color: #fff; background: #b34040; }
+.window-btn:focus-visible { outline-offset: -1px; }
+
+/* Asas invisibles para redimensionar la ventana sin decoración nativa. */
+.resize-handles {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+.resize-handle {
+  position: fixed;
+  display: block;
+  pointer-events: auto;
+  touch-action: none;
+}
+.resize-handle--n,
+.resize-handle--s { left: 7px; right: 7px; height: 4px; cursor: ns-resize; }
+.resize-handle--n { top: 0; }
+.resize-handle--s { bottom: 0; }
+.resize-handle--e,
+.resize-handle--w { top: 7px; bottom: 7px; width: 4px; cursor: ew-resize; }
+.resize-handle--e { right: 0; }
+.resize-handle--w { left: 0; }
+.resize-handle--ne,
+.resize-handle--nw,
+.resize-handle--se,
+.resize-handle--sw { width: 7px; height: 7px; }
+.resize-handle--ne { top: 0; right: 0; cursor: nesw-resize; }
+.resize-handle--nw { top: 0; left: 0; cursor: nwse-resize; }
+.resize-handle--se { bottom: 0; right: 0; cursor: nwse-resize; }
+.resize-handle--sw { bottom: 0; left: 0; cursor: nesw-resize; }
+
+body.is-maximized .resize-handle,
+body.is-mobile .resize-handle,
+body.is-mobile .titlebar__actions { display: none; }
 
 /* =========================================================
    Sidebar
@@ -4510,3 +4549,54 @@ kbd {
   .settings-row { align-items: flex-start; }
   .settings-row__control--actions { justify-content: flex-start; }
 }
+
+/* =========================================================
+   Vista móvil (Android)
+   ========================================================= */
+
+body.is-mobile {
+  --titlebar-h: calc(38px + env(safe-area-inset-top, 0px));
+  --player-h: calc(94px + env(safe-area-inset-bottom, 0px));
+}
+body.is-mobile .app-shell {
+  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-areas:
+    "titlebar titlebar"
+    "sidebar main"
+    "player player";
+}
+body.is-mobile .titlebar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: max(14px, env(safe-area-inset-left, 0px));
+  padding-right: max(8px, env(safe-area-inset-right, 0px));
+}
+body.is-mobile .titlebar__center,
+body.is-mobile .titlebar__edition,
+body.is-mobile .titlebar__actions { display: none; }
+body.is-mobile .titlebar__wordmark { font-size: 18px; }
+body.is-mobile .sidebar { padding: 11px 5px 8px; }
+body.is-mobile .sidebar__playlists { display: none; }
+body.is-mobile .topbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0 12px;
+  gap: 8px;
+}
+body.is-mobile .topbar__side--left { display: none; }
+body.is-mobile .main-scroll { padding: 0 12px; }
+body.is-mobile .hero {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 250px;
+  padding: 22px 18px;
+}
+body.is-mobile .hero__cover { display: none; }
+body.is-mobile .hero__title { font-size: clamp(36px, 12vw, 52px); }
+body.is-mobile .hero__subtitle { max-width: none; }
+body.is-mobile .context-panel { display: none; }
+body.is-mobile .playerbar {
+  padding-left: max(10px, env(safe-area-inset-left, 0px));
+  padding-right: max(10px, env(safe-area-inset-right, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+body.is-mobile .playerbar__center { display: none; }
+body.is-mobile .toasts { bottom: calc(var(--player-h) + 12px); }

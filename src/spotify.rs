@@ -5,7 +5,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -24,7 +23,8 @@ const CALLBACK_PORT: u16 = 43827;
 const AUTHORIZE_URL: &str = "https://accounts.spotify.com/authorize";
 const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
 const API_URL: &str = "https://api.spotify.com/v1";
-const SCOPES: &str = "playlist-read-private playlist-read-collaborative user-library-read user-read-private";
+const SCOPES: &str =
+    "playlist-read-private playlist-read-collaborative user-library-read user-read-private";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(240);
 const PAGE_SIZE: u32 = 50;
 
@@ -105,7 +105,9 @@ pub fn save_client_id(paths: &Paths, raw: &str) -> Result<SpotifyStatus, String>
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
     {
-        return Err("Ese Client ID no parece válido. Copia solo el Client ID de Spotify Developer.".into());
+        return Err(
+            "Ese Client ID no parece válido. Copia solo el Client ID de Spotify Developer.".into(),
+        );
     }
     let mut store = read_store(&paths.spotify_file);
     if store.client_id != client_id {
@@ -301,7 +303,12 @@ fn wait_for_callback(
                     .and_then(|line| line.split_whitespace().nth(1))
                     .unwrap_or("");
                 if !target.starts_with("/callback") {
-                    respond(&mut stream, 404, "Ruta no encontrada", "Davusic solo escucha el callback local de Spotify.");
+                    respond(
+                        &mut stream,
+                        404,
+                        "Ruta no encontrada",
+                        "Davusic solo escucha el callback local de Spotify.",
+                    );
                     continue;
                 }
                 let params = query_params(target);
@@ -339,7 +346,9 @@ fn wait_for_callback(
                 std::thread::sleep(Duration::from_millis(80));
             }
             Err(error) => {
-                return Err(format!("No se pudo recibir la respuesta de Spotify: {error}"));
+                return Err(format!(
+                    "No se pudo recibir la respuesta de Spotify: {error}"
+                ));
             }
         }
     }
@@ -683,9 +692,7 @@ where
     }
 
     if imported.is_empty() {
-        return Err(
-            "No se pudieron leer playlists ni Me gusta de esta cuenta de Spotify.".into(),
-        );
+        return Err("No se pudieron leer playlists ni Me gusta de esta cuenta de Spotify.".into());
     }
     warnings.push(
         "Davusic ha leído las playlists como lo haría Exportify: metadatos oficiales, sin descargar audio.".into(),
@@ -830,10 +837,14 @@ fn imported_track_from_container(container: &Value) -> Option<ImportedTrack> {
 // ---------- Web API ----------
 
 fn http_client() -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
+    crate::net::blocking_client_builder()
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(12))
-        .user_agent(format!("Davusic/{} (Linux; local-first music player)", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!(
+            "Davusic/{} ({}; local-first music player)",
+            env!("CARGO_PKG_VERSION"),
+            crate::platform::os_name()
+        ))
         .build()
         .map_err(|error| format!("No se pudo preparar la conexión con Spotify: {error}"))
 }
@@ -869,8 +880,9 @@ fn api_get(
                 .unwrap_or(2)
                 .min(20);
             std::thread::sleep(Duration::from_secs(seconds.max(1)));
-            last_error = "Spotify ha limitado las peticiones. Espera un momento e inténtalo de nuevo."
-                .into();
+            last_error =
+                "Spotify ha limitado las peticiones. Espera un momento e inténtalo de nuevo."
+                    .into();
             continue;
         }
         let body = response
@@ -942,7 +954,8 @@ fn spotify_error(body: &str, status: reqwest::StatusCode) -> String {
             .into();
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return "Spotify ha limitado las peticiones; espera un momento e inténtalo de nuevo.".into();
+        return "Spotify ha limitado las peticiones; espera un momento e inténtalo de nuevo."
+            .into();
     }
     if let Ok(value) = serde_json::from_str::<Value>(body) {
         for pointer in ["/error_description", "/error/message", "/error"] {
@@ -981,8 +994,7 @@ fn pkce_challenge(verifier: &str) -> String {
 }
 
 fn base64_url(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0];
@@ -1030,22 +1042,8 @@ fn query_params(target: &str) -> HashMap<String, String> {
 }
 
 fn open_browser(url: &str) -> Result<(), String> {
-    let attempts: [(&str, Vec<&str>); 2] = [
-        ("xdg-open", vec![url]),
-        ("gio", vec!["open", url]),
-    ];
-    for (program, args) in attempts {
-        match Command::new(program).args(args).spawn() {
-            Ok(_) => return Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(format!(
-                    "No se pudo abrir el navegador para conectar Spotify: {error}"
-                ));
-            }
-        }
-    }
-    Err("No se encontró un navegador para abrir la autorización de Spotify. Instala xdg-utils o abre Spotify desde tu navegador.".into())
+    crate::platform::open_url(url)
+        .map_err(|error| format!("No se pudo abrir el navegador para conectar Spotify: {error}"))
 }
 
 fn unix_now() -> i64 {
@@ -1125,7 +1123,8 @@ mod tests {
 
     #[test]
     fn callback_parameters_are_decoded() {
-        let params = query_params("/callback?code=AQD%2Fabc&state=xyz&error_description=Hola+mundo");
+        let params =
+            query_params("/callback?code=AQD%2Fabc&state=xyz&error_description=Hola+mundo");
         assert_eq!(params.get("code").map(String::as_str), Some("AQD/abc"));
         assert_eq!(params.get("state").map(String::as_str), Some("xyz"));
         assert_eq!(
@@ -1157,9 +1156,15 @@ mod tests {
         });
         let first = imported_track_from_container(&new_shape).expect("pista nueva");
         let second = imported_track_from_container(&old_shape).expect("pista antigua");
-        assert_eq!((first.title.as_str(), first.artist.as_str()), ("Bajamar", "Lúa"));
+        assert_eq!(
+            (first.title.as_str(), first.artist.as_str()),
+            ("Bajamar", "Lúa")
+        );
         assert_eq!(first.duration, 88.0);
-        assert_eq!((second.title.as_str(), second.artist.as_str()), ("Cromo", "Vera Nox"));
+        assert_eq!(
+            (second.title.as_str(), second.artist.as_str()),
+            ("Cromo", "Vera Nox")
+        );
     }
 
     #[test]
