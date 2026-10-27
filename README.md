@@ -55,7 +55,7 @@ Davusic está hecho con **Tauri 2 + Rust** y un frontend estático sin bundler. 
 
 ### Android
 
-Vista previa para Android 7.0 (API 24) o superior. Incluye la interfaz y una
+Vista previa para Android 8.0 (API 26) o superior. Incluye la interfaz y una
 biblioteca de demostración; todavía no importa música local, no ejecuta
 `yt-dlp` y no expone MPRIS. Consulta [BUILDING.md](BUILDING.md) para compilarla.
 
