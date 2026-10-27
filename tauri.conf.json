@@ -45,7 +45,7 @@
       "assets/icons/icon.png",
       "assets/icons/icon.ico"
     ],
-    "category": "Audio",
+    "category": "Music",
     "shortDescription": "Tu música, en tu PC.",
     "longDescription": "Davusic es un reproductor de música nativo, local-first, sin anuncios y sin telemetría. Disponible para Linux y Windows, con una versión móvil experimental para Android.",
     "linux": {
