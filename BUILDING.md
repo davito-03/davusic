@@ -76,7 +76,7 @@ la CI no dependa de ejecutar `tauri android init` en cada compilación.
 Requisitos:
 
 - JDK 17.
-- Android SDK con `platforms;android-37` y `build-tools;37.0.0`.
+- Android SDK con `platforms;android-36` y `build-tools;36.0.0`.
 - Android NDK `27.0.12077973`.
 - Rust targets de Android:
   `aarch64-linux-android`, `armv7-linux-androideabi`,

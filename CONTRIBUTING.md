@@ -16,7 +16,7 @@ En Arch/CachyOS:
 sudo pacman -S --needed base-devel rust webkit2gtk-4.1 gtk3 librsvg pkgconf
 ```
 
-El proyecto requiere Rust 1.95 o superior. Para comprobar la sintaxis del frontend hace falta Node 20 o superior. En Windows se necesita el toolchain MSVC y WebView2; para Android, JDK 17, SDK 37 y NDK 27. Las instrucciones completas están en [BUILDING.md](BUILDING.md).
+El proyecto requiere Rust 1.95 o superior. Para comprobar la sintaxis del frontend hace falta Node 20 o superior. En Windows se necesita el toolchain MSVC y WebView2; para Android, JDK 17, SDK 36 y NDK 27. Las instrucciones completas están en [BUILDING.md](BUILDING.md).
 
 ## Desarrollo
 
