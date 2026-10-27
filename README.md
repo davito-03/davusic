@@ -124,8 +124,8 @@ confirmación.
 ### Android
 
 Descarga `davusic-android-preview.apk` desde Releases. Es una APK de vista
-previa firmada en modo debug: se instala, pero no sirve para Google Play y no
-sustituye a la versión de escritorio.
+previa para **arm64** firmada en modo debug: se instala en la mayoría de móviles
+modernos, pero no sirve para Google Play y no sustituye a la versión de escritorio.
 
 ## Uso rápido
 

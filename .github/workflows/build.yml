@@ -134,7 +134,7 @@ jobs:
             | tar -xz -C "$HOME/.cargo/bin"
 
       - name: Compilar APK de vista previa
-        run: cargo tauri android build --debug --apk --ci
+        run: cargo tauri android build --debug --apk --ci --target aarch64
 
       - name: Preparar APK para la release
         run: |

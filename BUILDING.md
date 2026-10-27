@@ -101,10 +101,10 @@ El APK de release sin configurar un keystore queda sin firmar. Para una APK de
 prueba instalable se puede compilar en modo debug:
 
 ```bash
-cargo tauri android build --debug --apk --ci
+cargo tauri android build --debug --apk --ci --target aarch64
 ```
 
-La CI publica esa APK como **vista previa**. Antes de distribuir en Google Play
+La CI publica una APK de **vista previa para arm64** (la arquitectura de la mayoría de móviles actuales). Antes de distribuir en Google Play
 hay que crear un keystore, configurar `gen/android/keystore.properties` y añadir
 la configuración de firma en `gen/android/app/build.gradle.kts`.
 
