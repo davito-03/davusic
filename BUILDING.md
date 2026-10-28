@@ -136,8 +136,8 @@ La versión de escritorio (Linux y Windows) conserva toda la funcionalidad.
   artefactos y publica la release al empujar un tag `v*`.
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 La release incluye `.deb`, `.AppImage`, `.exe` (NSIS), `.msi` y la APK de

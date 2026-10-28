@@ -4,7 +4,7 @@
 
 Davusic está hecho con **Tauri 2 + Rust** y un frontend estático sin bundler. No hay anuncios, telemetría ni servidor propio. La cuenta de Spotify es opcional y **solo se usa para leer metadatos**: Davusic no reproduce el catálogo de Spotify ni elude DRM.
 
-> Estado: **0.1.0**, primera versión funcional. Pensada para Niri/DMS en CachyOS, pero funciona en cualquier escritorio Linux moderno con Wayland o X11 y en Windows 10/11. Android se distribuye como vista previa: interfaz y demo, sin biblioteca local, streaming ni MPRIS. Incluye restablecimiento de fábrica y exportación compatible con Exportify.
+> Estado: **0.1.1**, primera versión funcional con la identidad visual de Davito. Pensada para Niri/DMS en CachyOS, pero funciona en cualquier escritorio Linux moderno con Wayland o X11 y en Windows 10/11. Android se distribuye como vista previa: interfaz y demo, sin biblioteca local, streaming ni MPRIS. Incluye restablecimiento de fábrica y exportación compatible con Exportify.
 
 ---
 
@@ -227,8 +227,8 @@ El repositorio oficial es [davito-03/davusic](https://github.com/davito-03/davus
 
 ```bash
 git push origin main
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 La release incluye `.deb`, `.AppImage`, instaladores NSIS/MSI y `davusic-android-preview.apk`. Las compilaciones de Windows y Android se realizan en GitHub Actions, no en local.

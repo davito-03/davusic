@@ -3854,7 +3854,7 @@ function renderSettings() {
       <div class="settings-about__brand">
         <img src="assets/logo.png" alt="">
         <strong>Davusic</strong>
-        <span>v0.1.0</span>
+        <span>v0.1.1</span>
       </div>
       <p>Reproductor local-first al estilo de davito.dev. Hecho para Niri y CachyOS, sin nube propia y sin ruido.</p>
       <div class="privacy-line">${icon('check')}<span>Hecho con Rust, Tauri y demasiado cariño</span></div>

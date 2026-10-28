@@ -1,6 +1,6 @@
 [package]
 name = "davusic"
-version = "0.1.0"
+version = "0.1.1"
 description = "Davusic — reproductor de música nativo, local-first, al estilo de davito.dev"
 authors = ["Davo"]
 edition = "2021"
