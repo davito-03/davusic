@@ -42,6 +42,18 @@ Para instalar en el usuario actual:
 ./scripts/install.sh
 ```
 
+## Iconos
+
+El icono se mantiene como SVG en `assets/icon.svg`. Para regenerar los PNG de
+escritorio, el `.ico`, el logo del frontend y los mipmaps de Android:
+
+```bash
+./scripts/make-icon.sh
+```
+
+Requiere `rsvg-convert` (`librsvg`) y Tauri CLI 2. El script usa el mismo icono
+para Linux, Windows y Android.
+
 ## Windows
 
 Requisitos:

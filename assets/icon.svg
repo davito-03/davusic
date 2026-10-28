@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#131420"/>
+      <stop offset=".55" stop-color="#08090f"/>
+      <stop offset="1" stop-color="#050507"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c3b3ff"/>
+      <stop offset=".5" stop-color="#8a7fff"/>
+      <stop offset="1" stop-color="#6f5cff"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9bffff"/>
+      <stop offset=".5" stop-color="#35e6ff"/>
+      <stop offset="1" stop-color="#00bde8"/>
+    </linearGradient>
+    <linearGradient id="coral" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff9a83"/>
+      <stop offset=".45" stop-color="#ff656d"/>
+      <stop offset="1" stop-color="#ef345c"/>
+    </linearGradient>
+    <linearGradient id="coralLight" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc2a8"/>
+      <stop offset="1" stop-color="#ff6e72"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".46" r=".55">
+      <stop offset="0" stop-color="#ff6a71" stop-opacity=".24"/>
+      <stop offset=".55" stop-color="#8a7fff" stop-opacity=".10"/>
+      <stop offset="1" stop-color="#8a7fff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="purpleGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="14" flood-color="#8a7fff" flood-opacity=".65"/>
+    </filter>
+    <filter id="cyanGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="12" flood-color="#22ddff" flood-opacity=".75"/>
+    </filter>
+    <filter id="coralGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="16" flood-color="#ff4f68" flood-opacity=".45"/>
+    </filter>
+    <clipPath id="squircle"><rect x="22" y="22" width="980" height="980" rx="226"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect x="22" y="22" width="980" height="980" fill="url(#bg)"/>
+    <ellipse cx="512" cy="500" rx="470" ry="430" fill="url(#glow)"/>
+    <!-- faint cyber grid -->
+    <g stroke="#8a7fff" stroke-width="1.2" opacity=".075">
+      <path d="M120 0V1024M220 0V1024M320 0V1024M420 0V1024M520 0V1024M620 0V1024M720 0V1024M820 0V1024M920 0V1024"/>
+      <path d="M0 120H1024M0 220H1024M0 320H1024M0 420H1024M0 520H1024M0 620H1024M0 720H1024M0 820H1024M0 920H1024"/>
+    </g>
+    <!-- glow pools -->
+    <circle cx="330" cy="350" r="260" fill="#ff4f68" opacity=".07"/>
+    <circle cx="720" cy="700" r="280" fill="#22ddff" opacity=".055"/>
+
+    <!-- HUD corner brackets -->
+    <g fill="none" stroke="#696487" stroke-width="11" stroke-linecap="round" opacity=".55">
+      <path d="M92 166V92H166"/>
+      <path d="M858 92H932V166"/>
+      <path d="M92 858V932H166"/>
+      <path d="M858 932H932V858"/>
+    </g>
+
+    <!-- antennae -->
+    <path d="M430 336C392 244 344 160 300 114" fill="none" stroke="#611a2c" stroke-width="18" stroke-linecap="round"/>
+    <path d="M430 336C392 244 344 160 300 114" fill="none" stroke="url(#coralLight)" stroke-width="9" stroke-linecap="round"/>
+    <circle cx="298" cy="112" r="14" fill="#ffd3bd" stroke="#5a1728" stroke-width="6"/>
+    <path d="M594 336C632 244 680 160 724 114" fill="none" stroke="#611a2c" stroke-width="18" stroke-linecap="round"/>
+    <path d="M594 336C632 244 680 160 724 114" fill="none" stroke="url(#coralLight)" stroke-width="9" stroke-linecap="round"/>
+    <circle cx="726" cy="112" r="14" fill="#ffd3bd" stroke="#5a1728" stroke-width="6"/>
+
+    <!-- headphones band -->
+    <path d="M236 520C236 205 788 205 788 520" fill="none" stroke="#241c45" stroke-width="62" stroke-linecap="round"/>
+    <path d="M236 520C236 205 788 205 788 520" fill="none" stroke="url(#purple)" stroke-width="42" stroke-linecap="round" filter="url(#purpleGlow)"/>
+    <path d="M286 476C286 276 738 276 738 476" fill="none" stroke="#d5caff" stroke-width="6" stroke-linecap="round" opacity=".5"/>
+
+    <!-- head with cat ears -->
+    <path d="M276 440L238 200L468 322Q512 308 556 322L786 200L748 440Q804 506 792 626Q776 756 642 782Q512 810 382 782Q248 756 232 626Q220 506 276 440Z"
+          fill="url(#coral)" stroke="#35101e" stroke-width="18" stroke-linejoin="round" filter="url(#coralGlow)"/>
+    <!-- inner ears -->
+    <path d="M282 392L255 238L424 322Z" fill="#8a7fff" opacity=".55"/>
+    <path d="M742 392L769 238L600 322Z" fill="#8a7fff" opacity=".55"/>
+    <path d="M286 386L266 266L390 326Z" fill="#d8ccff" opacity=".34"/>
+    <path d="M738 386L758 266L634 326Z" fill="#d8ccff" opacity=".34"/>
+    <!-- forehead sheen -->
+    <path d="M320 390Q512 328 704 390" fill="none" stroke="#ffd3bb" stroke-width="10" stroke-linecap="round" opacity=".35"/>
+
+    <!-- ear cups -->
+    <g filter="url(#purpleGlow)">
+      <rect x="148" y="492" width="154" height="276" rx="74" fill="#1b1830" stroke="url(#purple)" stroke-width="26"/>
+      <rect x="722" y="492" width="154" height="276" rx="74" fill="#1b1830" stroke="url(#purple)" stroke-width="26"/>
+    </g>
+    <rect x="174" y="522" width="102" height="216" rx="51" fill="#0a0914" stroke="#453a72" stroke-width="8"/>
+    <rect x="748" y="522" width="102" height="216" rx="51" fill="#0a0914" stroke="#453a72" stroke-width="8"/>
+    <rect x="196" y="556" width="58" height="148" rx="29" fill="none" stroke="url(#cyan)" stroke-width="12" opacity=".9" filter="url(#cyanGlow)"/>
+    <rect x="770" y="556" width="58" height="148" rx="29" fill="none" stroke="url(#cyan)" stroke-width="12" opacity=".9" filter="url(#cyanGlow)"/>
+
+    <!-- visor -->
+    <rect x="306" y="438" width="412" height="202" rx="96" fill="#071019" stroke="#1b3a4a" stroke-width="30"/>
+    <rect x="306" y="438" width="412" height="202" rx="96" fill="#071019" stroke="url(#cyan)" stroke-width="18" filter="url(#cyanGlow)"/>
+    <path d="M354 470Q512 438 670 470" fill="none" stroke="#b9fdff" stroke-width="5" stroke-linecap="round" opacity=".3"/>
+
+    <!-- equalizer bars -->
+    <g fill="url(#cyan)" filter="url(#cyanGlow)">
+      <rect x="348" y="516" width="14" height="48" rx="7" opacity=".8"/>
+      <rect x="372" y="494" width="14" height="92" rx="7" opacity=".95"/>
+      <rect x="396" y="526" width="14" height="28" rx="7" opacity=".65"/>
+      <rect x="614" y="526" width="14" height="28" rx="7" opacity=".65"/>
+      <rect x="638" y="494" width="14" height="92" rx="7" opacity=".95"/>
+      <rect x="662" y="516" width="14" height="48" rx="7" opacity=".8"/>
+    </g>
+
+    <!-- vinyl + play -->
+    <circle cx="512" cy="539" r="72" fill="#0b0b12" stroke="url(#coral)" stroke-width="13" filter="url(#coralGlow)"/>
+    <circle cx="512" cy="539" r="50" fill="none" stroke="#ff8f84" stroke-width="3" opacity=".32"/>
+    <circle cx="512" cy="539" r="34" fill="url(#coral)"/>
+    <path d="M501 520L536 539L501 558Z" fill="#f4ffff"/>
+    <circle cx="512" cy="539" r="4" fill="#071019" opacity=".7"/>
+
+    <!-- nose / mouth -->
+    <path d="M500 674H524L512 686Z" fill="#45111e"/>
+    <path d="M480 700Q496 716 512 698Q528 716 544 700" fill="none" stroke="#45111e" stroke-width="11" stroke-linecap="round"/>
+
+    <!-- border -->
+    <rect x="36" y="36" width="952" height="952" rx="214" fill="none" stroke="url(#purple)" stroke-width="24" filter="url(#purpleGlow)"/>
+
+  </g>
+</svg>
