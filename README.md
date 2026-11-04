@@ -1,5 +1,9 @@
 # Davusic
 
+<p align="center">
+  <img src="docs/screenshots/preview.png" alt="Davusic - Reproductor Nativo Local-First" width="100%" style="border-radius: 8px;">
+</p>
+
 **Tu música, en tu equipo.** Reproductor nativo, local-first y en español para Linux y Windows, con una versión Android en vista previa. Combina tu biblioteca local, búsqueda y streaming de YouTube mediante `yt-dlp`, letras de LRCLIB e importación de playlists de Spotify, YouTube Music y **Exportify**.
 
 Davusic está hecho con **Tauri 2 + Rust** y un frontend estático sin bundler. No hay anuncios, telemetría ni servidor propio. La cuenta de Spotify es opcional y **solo se usa para leer metadatos**: Davusic no reproduce el catálogo de Spotify ni elude DRM.
@@ -250,6 +254,14 @@ La release incluye `.deb`, `.AppImage`, instaladores NSIS/MSI y `davusic-android
 | `Q` / `L` / `I` | Cola / letra / reproductor inmersivo |
 | `M` / `S` / `R` | Silenciar / aleatorio / repetición |
 | `?` | Ver todos los atajos |
+
+## Arquitectura
+
+<p align="center">
+  <img src="docs/screenshots/architecture.png" alt="Arquitectura técnica de Davusic" width="100%" style="border-radius: 8px;">
+</p>
+
+Davusic desacopla el frontend estático de los subsistemas nativos mediante comandos IPC de Tauri 2: el motor de audio `rodio` se ejecuta en un hilo de baja latencia con decodificadores Symphonia, mientras que `lofty` procesa etiquetas en paralelo y `yt-dlp` resuelve streaming efímero gestionado por un recolector LRU en disco.
 
 ## Estructura
 

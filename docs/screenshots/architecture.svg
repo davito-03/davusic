@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f111a"/>
+      <stop offset="50%" stop-color="#07080d"/>
+      <stop offset="100%" stop-color="#040508"/>
+    </linearGradient>
+    <linearGradient id="rustGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#c2410c"/>
+    </linearGradient>
+    <linearGradient id="tauriGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+    <linearGradient id="purpleGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#c084fc"/>
+      <stop offset="100%" stop-color="#7e22ce"/>
+    </linearGradient>
+    <linearGradient id="coralGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fb7185"/>
+      <stop offset="100%" stop-color="#e11d48"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#38bdf8" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="560" rx="16" fill="url(#bg)" stroke="#1e293b" stroke-width="2"/>
+
+  <!-- Micro Grid -->
+  <g stroke="#334155" stroke-width="1" opacity="0.15">
+    <path d="M0 70H1200 M0 140H1200 M0 210H1200 M0 280H1200 M0 350H1200 M0 420H1200 M0 490H1200"/>
+    <path d="M100 0V560 M200 0V560 M300 0V560 M400 0V560 M500 0V560 M600 0V560 M700 0V560 M800 0V560 M900 0V560 M1000 0V560 M1100 0V560"/>
+  </g>
+
+  <!-- Title Bar -->
+  <g transform="translate(40, 42)">
+    <text font-family="monospace" font-size="14" fill="#38bdf8" letter-spacing="3" font-weight="bold">DAVUSIC // ARQUITECTURA TÉCNICA LOCAL-FIRST</text>
+    <text x="860" font-family="monospace" font-size="12" fill="#64748b">TAURI 2 · RUST 1.85 · ZERO BUNDLER</text>
+    <line x1="0" y1="14" x2="1120" y2="14" stroke="#334155" stroke-width="1.5"/>
+  </g>
+
+  <!-- LAYER 1: FRONTEND (TOP) -->
+  <g transform="translate(60, 90)">
+    <rect width="1080" height="85" rx="12" fill="#0d1527" stroke="#0284c7" stroke-width="2"/>
+    <text x="30" y="32" font-family="monospace" font-size="14" font-weight="bold" fill="#38bdf8">CAPA DE PRESENTACIÓN (FRONTEND ESTÁTICO)</text>
+    <text x="30" y="58" font-family="system-ui, sans-serif" font-size="13" fill="#cbd5e1">Vanilla JS (ES6+) · CSS3 Variables · HTML5 Semántico · Cero frameworks pesados ni node_modules en runtime</text>
+    <!-- Modules tags -->
+    <g transform="translate(740, 25)" font-family="monospace" font-size="11">
+      <rect x="0" y="0" width="100" height="26" rx="6" fill="#0369a1"/>
+      <text x="50" y="17" fill="#ffffff" text-anchor="middle">UI / HUD</text>
+      <rect x="110" y="0" width="100" height="26" rx="6" fill="#0369a1"/>
+      <text x="160" y="17" fill="#ffffff" text-anchor="middle">Player State</text>
+      <rect x="220" y="0" width="100" height="26" rx="6" fill="#0369a1"/>
+      <text x="270" y="17" fill="#ffffff" text-anchor="middle">Lyrics Sync</text>
+    </g>
+  </g>
+
+  <!-- IPC BRIDGE ARROWS -->
+  <g stroke="#38bdf8" stroke-width="2" stroke-dasharray="6 4" opacity="0.8">
+    <line x1="250" y1="175" x2="250" y2="215"/>
+    <line x1="600" y1="175" x2="600" y2="215"/>
+    <line x1="950" y1="175" x2="950" y2="215"/>
+  </g>
+  <text x="600" y="200" font-family="monospace" font-size="11" fill="#38bdf8" text-anchor="middle">Tauri IPC Commands &amp; Events (invoke / emit)</text>
+
+  <!-- LAYER 2: TAURI 2 RUST CORE (MIDDLE) -->
+  <g transform="translate(60, 215)">
+    <rect width="1080" height="110" rx="12" fill="#181310" stroke="url(#rustGrad)" stroke-width="2"/>
+    <text x="30" y="32" font-family="monospace" font-size="14" font-weight="bold" fill="#fb923c">MOTOR NATIVO (RUST CORE 1.85+)</text>
+    <text x="30" y="58" font-family="system-ui, sans-serif" font-size="13" fill="#cbd5e1">Control atómico de reproducción de audio, caché en disco LRU, llamadas seguras al sistema y concurrencia Tokio</text>
+
+    <!-- Sub-blocks inside Rust Core -->
+    <g transform="translate(30, 72)" font-family="monospace" font-size="11">
+      <rect x="0" y="0" width="190" height="26" rx="6" fill="#431407" stroke="#ea580c" stroke-width="1"/>
+      <text x="95" y="17" fill="#fdba74" text-anchor="middle">Atomic Play Generation</text>
+      <rect x="205" y="0" width="190" height="26" rx="6" fill="#431407" stroke="#ea580c" stroke-width="1"/>
+      <text x="300" y="17" fill="#fdba74" text-anchor="middle">Audio Queue Thread</text>
+      <rect x="410" y="0" width="190" height="26" rx="6" fill="#431407" stroke="#ea580c" stroke-width="1"/>
+      <text x="505" y="17" fill="#fdba74" text-anchor="middle">LRU Cache Manager</text>
+      <rect x="615" y="0" width="190" height="26" rx="6" fill="#431407" stroke="#ea580c" stroke-width="1"/>
+      <text x="710" y="17" fill="#fdba74" text-anchor="middle">Tokio Async Runtime</text>
+      <rect x="820" y="0" width="200" height="26" rx="6" fill="#431407" stroke="#ea580c" stroke-width="1"/>
+      <text x="920" y="17" fill="#fdba74" text-anchor="middle">SQLite Local State</text>
+    </g>
+  </g>
+
+  <!-- LAYER 3: SUBSYSTEMS & EXTERNAL SERVICES (BOTTOM) -->
+  <!-- Box 1: rodio + Symphonia -->
+  <g transform="translate(60, 360)">
+    <rect width="250" height="150" rx="10" fill="#131422" stroke="#6366f1" stroke-width="1.5"/>
+    <text x="20" y="28" font-family="monospace" font-size="13" font-weight="bold" fill="#a5b4fc">rodio 0.23 + Symphonia</text>
+    <text x="20" y="52" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8">Decodificación FLAC, MP3, Opus, WAV y ALAC en hilo de audio dedicado sin saturar la UI.</text>
+    <rect x="20" y="112" width="210" height="22" rx="4" fill="#1e1b4b"/>
+    <text x="125" y="127" font-family="monospace" font-size="11" fill="#c7d2fe" text-anchor="middle">ALSA / PipeWire / WASAPI</text>
+  </g>
+
+  <!-- Box 2: yt-dlp Subprocess -->
+  <g transform="translate(335, 360)">
+    <rect width="250" height="150" rx="10" fill="#1c0f14" stroke="#f43f5e" stroke-width="1.5"/>
+    <text x="20" y="28" font-family="monospace" font-size="13" font-weight="bold" fill="#fda4af">yt-dlp Stream Cache</text>
+    <text x="20" y="52" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8">Búsqueda bajo demanda, extracción de audio ligero y caché temporal con poda LRU automática.</text>
+    <rect x="20" y="112" width="210" height="22" rx="4" fill="#4c0519"/>
+    <text x="125" y="127" font-family="monospace" font-size="11" fill="#fecdd3" text-anchor="middle">Temp Audio Cache (LRU)</text>
+  </g>
+
+  <!-- Box 3: Spotify PKCE & Exportify -->
+  <g transform="translate(610, 360)">
+    <rect width="250" height="150" rx="10" fill="#091b15" stroke="#10b981" stroke-width="1.5"/>
+    <text x="20" y="28" font-family="monospace" font-size="13" font-weight="bold" fill="#6ee7b7">Spotify OAuth 2.0 PKCE</text>
+    <text x="20" y="52" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8">Lectura legal y transparente de metadatos (playlists, likes) sin tokens extraños ni elusión de DRM.</text>
+    <rect x="20" y="112" width="210" height="22" rx="4" fill="#064e3b"/>
+    <text x="125" y="127" font-family="monospace" font-size="11" fill="#a7f3d0" text-anchor="middle">Metadata Only / Exportify</text>
+  </g>
+
+  <!-- Box 4: MPRIS & LRCLIB -->
+  <g transform="translate(885, 360)">
+    <rect width="255" height="150" rx="10" fill="#161828" stroke="#8b5cf6" stroke-width="1.5"/>
+    <text x="20" y="28" font-family="monospace" font-size="13" font-weight="bold" fill="#c4b5fd">MPRIS v2 &amp; LRCLIB</text>
+    <text x="20" y="52" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8">D-Bus nativo para atajos de teclado y carátulas en Linux (Wayland / Niri) + letras sincronizadas LRC.</text>
+    <rect x="20" y="112" width="215" height="22" rx="4" fill="#2e1065"/>
+    <text x="127" y="127" font-family="monospace" font-size="11" fill="#ddd6fe" text-anchor="middle">D-Bus MPRIS / Wayland</text>
+  </g>
+</svg>
