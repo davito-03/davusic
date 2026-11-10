@@ -42,6 +42,10 @@ pub struct Track {
     pub source: String,
     #[serde(default)]
     pub uri: String,
+    /// Tamaño del archivo; junto con `added_at` (su fecha de modificación)
+    /// permite saber si hay que volver a leer las etiquetas.
+    #[serde(default)]
+    pub file_size: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -217,6 +221,9 @@ pub struct ImportedTrack {
     pub duration: f64,
     #[serde(default)]
     pub uri: String,
+    /// Carátula remota (https) cuando el origen la ofrece.
+    #[serde(default)]
+    pub cover: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -238,6 +245,28 @@ pub struct ImportBundle {
     pub warnings: Vec<String>,
     #[serde(default)]
     pub origin: String,
+    #[serde(default)]
+    pub cover: String,
+}
+
+/// Archivo de Exportify encontrado en la carpeta de descargas.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportifyDownload {
+    pub path: String,
+    pub name: String,
+    /// Fecha de modificación, en segundos desde 1970.
+    pub modified: u64,
+    pub size: u64,
+    pub playlists: u32,
+    pub tracks: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportifyDownloads {
+    pub folder: String,
+    pub files: Vec<ExportifyDownload>,
 }
 
 // ---------- Cuenta de Spotify ----------
@@ -261,6 +290,12 @@ pub struct SpotifyStatus {
     pub product: String,
     #[serde(default)]
     pub redirect_uri: String,
+    /// La sesión usa el Client ID incluido en Davusic, no uno propio.
+    #[serde(default)]
+    pub builtin: bool,
+    /// Este binario trae un Client ID incluido.
+    #[serde(default)]
+    pub builtin_available: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]

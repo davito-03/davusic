@@ -4301,6 +4301,14 @@ body.is-mobile .titlebar__actions { display: none; }
 .spotify-section__title { display: flex; flex-direction: column; gap: 2px; }
 .spotify-section__title strong { font-size: 12px; }
 .spotify-section__title span { font-size: 8px; color: var(--faint); }
+.exportify-guide { padding: 13px 14px; }
+.exportify-step-open { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.exportify-downloads { display: flex; flex-direction: column; gap: 8px; }
+.exportify-downloads:empty { display: none; }
+.exportify-downloads__head { display: flex; align-items: center; gap: 10px; font-size: 10.5px; color: var(--text-soft); }
+.exportify-waiting { padding: 8px 4px; }
+.exportify-manual { display: inline-flex; align-items: center; gap: 6px; font-size: 9.5px; color: var(--faint); }
+.exportify-waiting strong { color: var(--text-soft); font-weight: 650; }
 .spotify-list { display: flex; flex-direction: column; gap: 5px; }
 .spotify-row {
   display: grid;

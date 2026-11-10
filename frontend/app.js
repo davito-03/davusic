@@ -619,12 +619,18 @@ function adoptStreamTrack(raw, options = {}) {
   const index = state.stream.tracks.findIndex((item) => item.id === track.id);
   if (index >= 0) {
     const previous = state.stream.tracks[index];
+    // Reimportar la misma canción (p. ej. desde Spotify) no debe pisar el
+    // enlace de YouTube que ya se resolvió al reproducirla.
+    const keepUri = youtubeVideoId(previous.uri) && !youtubeVideoId(track.uri);
+    const uri = keepUri ? previous.uri : (track.uri || previous.uri);
     state.stream.tracks[index] = {
       ...previous,
       ...track,
       cover: track.cover || previous.cover,
-      uri: track.uri || previous.uri,
+      uri,
+      src: uri,
       duration: track.duration || previous.duration,
+      added_at: previous.added_at || track.added_at,
     };
   } else {
     state.stream.tracks.push(track);
@@ -655,7 +661,7 @@ function collectionsFromStream(tracks) {
       });
     }
     const artist = artists.get(artistId);
-    if (!artist.track_ids.includes(track.id)) artist.track_ids.push(track.id);
+    artist.track_ids.push(track.id);
     if (!artist.cover && track.cover) artist.cover = track.cover;
     const albumId = track.album_id || `stream-album-${fnv1a(`${fold(track.album)}|${fold(track.artist)}`)}`;
     if (!albums.has(albumId)) {
@@ -672,13 +678,11 @@ function collectionsFromStream(tracks) {
         added_at: track.added_at || Date.now(),
         source: 'stream',
       });
+      artist.album_count += 1;
     }
     const album = albums.get(albumId);
-    if (!album.track_ids.includes(track.id)) album.track_ids.push(track.id);
+    album.track_ids.push(track.id);
     if (!album.cover && track.cover) album.cover = track.cover;
-  });
-  artists.forEach((artist) => {
-    artist.album_count = [...albums.values()].filter((album) => album.artist_id === artist.id).length;
   });
   return { albums: [...albums.values()], artists: [...artists.values()] };
 }
@@ -1027,22 +1031,24 @@ const browserAudio = (() => {
   return browser;
 })();
 
+function playbackRequest(track) {
+  return {
+    id: track.id,
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    duration: track.duration,
+    source: track.source,
+    path: track.source === 'stream' ? (track.uri || track.path || track.src || '') : (track.path || track.src || ''),
+    uri: track.uri || '',
+    cover: track.cover || '',
+    accent: track.accent || '',
+  };
+}
+
 const nativeAudio = {
   async load(track) {
-    return inv('play_track', {
-      request: {
-        id: track.id,
-        title: track.title,
-        artist: track.artist,
-        album: track.album,
-        duration: track.duration,
-        source: track.source,
-        path: track.source === 'stream' ? (track.uri || track.path || track.src || '') : (track.path || track.src || ''),
-        uri: track.uri || '',
-        cover: track.cover || '',
-        accent: track.accent || '',
-      },
-    });
+    return inv('play_track', { request: playbackRequest(track) });
   },
   async pause() { return inv('pause_playback'); },
   async resume() { return inv('resume_playback'); },
@@ -2276,6 +2282,7 @@ async function startCurrent(options = {}) {
     ensureLyrics(track);
     if (!options.restore && wantsRadio(state.player.context)) fillRadioQueue(track.id);
     scheduleSessionSave();
+    if (!options.paused) prefetchUpcoming();
   } catch (error) {
     if (state.player.trackId !== requested) return;
     state.player.loading = false;
@@ -2599,6 +2606,34 @@ async function previousTrack() {
   } else {
     await seekTo(0);
   }
+}
+
+/* Mientras suena una canción se deja lista la siguiente de la cola (búsqueda
+   y audio en caché), para que el salto entre pistas en streaming sea inmediato. */
+let prefetchedId = '';
+function prefetchUpcoming() {
+  if (!IS_TAURI || MOBILE_PREVIEW) return;
+  const p = state.player;
+  if (!p.queue.length || p.repeat === 'one') return;
+  let index = p.index + 1;
+  if (index >= p.queue.length) {
+    if (p.repeat !== 'all') return;
+    index = 0;
+  }
+  const track = trackFromId(p.queue[index]);
+  if (!track || track.source !== 'stream' || track.id === p.trackId || track.id === prefetchedId) return;
+  prefetchedId = track.id;
+  inv('prefetch_track', { request: playbackRequest(track) }).then((result) => {
+    if (!result?.uri || track.uri === result.uri) return;
+    track.uri = result.uri;
+    const stored = (state.stream.tracks || []).find((item) => item.id === track.id);
+    if (stored) {
+      stored.uri = result.uri;
+      persistStreams();
+    }
+  }).catch(() => {
+    if (prefetchedId === track.id) prefetchedId = '';
+  });
 }
 
 function handleTrackEnded() {
@@ -3854,7 +3889,7 @@ function renderSettings() {
       <div class="settings-about__brand">
         <img src="assets/logo.png" alt="">
         <strong>Davusic</strong>
-        <span>v0.1.1</span>
+        <span>v0.1.2</span>
       </div>
       <p>Reproductor local-first al estilo de davito.dev. Hecho para Niri y CachyOS, sin nube propia y sin ruido.</p>
       <div class="privacy-line">${icon('check')}<span>Hecho con Rust, Tauri y demasiado cariño</span></div>
@@ -4598,7 +4633,9 @@ function handleDocumentClick(event) {
   }
 
   if (target.closest('[data-close-import]')) { closeImportModal(); return; }
-  if (target.closest('[data-exportify-open]')) { openExternalUrl('https://exportify.net/'); return; }
+  if (target.closest('[data-exportify-open]')) { openExportifyGuided(); return; }
+  const exportifyDownload = target.closest('[data-exportify-download]');
+  if (exportifyDownload) { handleExportifyDownloadClick(exportifyDownload.dataset.exportifyDownload); return; }
   if (target.closest('[data-exportify-file]')) { importExportifyFile(); return; }
   if (target.closest('[data-exportify-export]')) { exportExportifyLibrary(); return; }
   const exportifyPlaylist = target.closest('[data-exportify-playlist]');
@@ -5870,6 +5907,7 @@ function spotifySetupMarkup() {
       <button type="button" class="btn btn--soft" data-spotify-save-client>${icon('check')} Guardar</button>
       ${state.spotify.editClient ? `<button type="button" class="link-btn" data-spotify-edit-client>Cancelar</button>` : ''}
     </div>
+    ${status?.builtinAvailable && !status?.builtin ? `<div class="spotify-actions"><button type="button" class="link-btn" data-spotify-use-builtin>${icon('refresh')} Volver al inicio de sesión directo de Davusic</button></div>` : ''}
     ${spotifyAlertMarkup()}
     <div class="spotify-footnote">${icon('shield')}<span>El inicio de sesión se abre en tu navegador. Davusic nunca lee cookies ni la sesión de otras webs. Spotify exige Premium a la cuenta propietaria de la app en modo desarrollo.</span></div>
   </div>`;
@@ -5881,18 +5919,19 @@ function spotifyConnectMarkup() {
     <div class="spotify-card__head">
       <span class="spotify-mark">${icon('spotify')}</span>
       <span class="spotify-card__copy">
-        <strong>Client ID listo</strong>
-        <span>La app está configurada. Autoriza tu cuenta para leer playlists y Me gusta.</span>
+        <strong>${status?.builtin ? 'Importa desde tu cuenta de Spotify' : 'Client ID listo'}</strong>
+        <span>${status?.builtin ? 'Inicia sesión con Spotify y elige qué playlists traer. No hay que configurar nada.' : 'La app está configurada. Autoriza tu cuenta para leer playlists y Me gusta.'}</span>
       </span>
       <span class="spotify-pill is-ok">${icon('check')} Lista</span>
     </div>
-    <div class="spotify-client-line">
+    ${status?.builtin ? '' : `<div class="spotify-client-line">
       <span>Client ID</span>
       <code>${esc(spotifyShortId(status?.clientId))}</code>
       <button type="button" class="link-btn" data-spotify-edit-client>Cambiar</button>
-    </div>
+    </div>`}
     <div class="spotify-actions">
       <button type="button" class="btn btn--primary" data-spotify-connect>${icon('spotify')} Conectar con Spotify</button>
+      ${status?.builtin ? `<span class="spotify-actions__spacer"></span><button type="button" class="link-btn" data-spotify-edit-client>Usar mi propio Client ID</button>` : ''}
     </div>
     ${spotifyAlertMarkup()}
     <div class="spotify-footnote">${icon('shield')}<span>Se abrirá la pantalla oficial de Spotify en tu navegador. Si ya tienes sesión, solo tendrás que aceptar el acceso.</span></div>
@@ -5927,7 +5966,7 @@ function spotifyConnectedMarkup() {
   </div>
   <div class="spotify-actions spotify-actions--account">
     <button type="button" class="link-btn" data-spotify-refresh>${icon('refresh')} Actualizar</button>
-    <button type="button" class="link-btn" data-spotify-edit-client>Cambiar Client ID</button>
+    <button type="button" class="link-btn" data-spotify-edit-client>${status.builtin ? 'Usar mi propio Client ID' : 'Cambiar Client ID'}</button>
     <span class="spotify-actions__spacer"></span>
     <button type="button" class="link-btn spotify-danger" data-spotify-logout>${icon('x')} Desconectar</button>
   </div>
@@ -6251,6 +6290,25 @@ async function saveSpotifyClientId() {
   }
 }
 
+async function useBuiltinSpotifyClient() {
+  if (!IS_TAURI) return;
+  const s = state.spotify;
+  s.error = '';
+  s.notice = '';
+  try {
+    const status = await inv('spotify_save_client_id', { clientId: '' });
+    s.clientIdDraft = '';
+    s.editClient = false;
+    applySpotifyStatus(status);
+    if (!status.connected) resetSpotifyPlaylists();
+    s.notice = 'Listo. Pulsa «Conectar con Spotify» para iniciar sesión.';
+  } catch (error) {
+    s.error = `No se pudo cambiar el Client ID. ${spotifyErrorText(error)}`;
+  } finally {
+    refreshSpotifyViews();
+  }
+}
+
 async function connectSpotify() {
   if (!IS_TAURI) {
     toast('Conectar Spotify está disponible en la app de escritorio.', 'spotify');
@@ -6528,6 +6586,10 @@ function handleSpotifyAction(target) {
     refreshSpotifyAccount();
     return true;
   }
+  if (target.closest('[data-spotify-use-builtin]')) {
+    useBuiltinSpotifyClient();
+    return true;
+  }
   if (target.closest('[data-spotify-edit-client]')) {
     const s = state.spotify;
     s.editClient = !s.editClient;
@@ -6604,6 +6666,7 @@ function closeImportModal(force = false) {
     if (!window.confirm('Hay una importación en curso. ¿Cerrar la ventana de todos modos?')) return;
   }
   els.importModal.hidden = true;
+  syncExportifyPolling();
 }
 
 function resetImportFlow() {
@@ -6778,6 +6841,7 @@ function renderImport() {
   else if (step === 'done') html = renderImportDone();
   else html = renderImportSource();
   els.importBody.innerHTML = html;
+  syncExportifyPolling();
 }
 
 function renderImportSource() {
@@ -6827,18 +6891,29 @@ function renderImportSource() {
     const totalTracks = exportable.reduce((sum, playlist) => sum + playlist.tracks.length, 0);
     return `<div class="import-pane">
       ${warning}${error}
-      <p class="import-pane__lede">Exportify extrae tus playlists de Spotify a CSV o ZIP. Davusic lee esos archivos de forma nativa y, si quieres, también puede exportar tu biblioteca local en el mismo formato.</p>
-      <div class="import-source-grid">
-        <button class="import-source" data-exportify-open>
-          <span class="import-source__icon">${icon('globe')}</span>
-          <span class="import-source__copy"><strong>Abrir exportify.net</strong><span>La web oficial. Inicia sesión con Spotify y descarga tus playlists.</span></span>
-        </button>
-        <button class="import-source" data-exportify-file ${disabled ? 'disabled' : ''}>
-          <span class="import-source__icon">${icon('file')}</span>
-          <span class="import-source__copy"><strong>Importar CSV o ZIP</strong><span>Selecciona lo que hayas descargado. Se lee en tu equipo.</span></span>
-        </button>
+      <p class="import-pane__lede">Exportify saca tus playlists y tus Me gusta de Spotify con tu cuenta de siempre: sin Premium y sin configurar nada. Davusic recoge la descarga y la importa por ti.</p>
+      <div class="spotify-card exportify-guide">
+        <div class="spotify-steps">
+          <div class="spotify-step">
+            <span class="spotify-step__n">1</span>
+            <span class="exportify-step-open">Abre Exportify e inicia sesión con tu cuenta de Spotify.
+              <button class="btn btn--primary" data-exportify-open>${icon('globe')} Abrir Exportify</button>
+            </span>
+          </div>
+          <div class="spotify-step">
+            <span class="spotify-step__n">2</span>
+            <span>Pulsa <strong>Export All</strong> para llevártelo todo en un ZIP, o <strong>Export</strong> en las playlists que quieras.</span>
+          </div>
+          <div class="spotify-step">
+            <span class="spotify-step__n">3</span>
+            <span>Vuelve aquí. Davusic detecta la descarga y te deja elegir qué playlists traer.</span>
+          </div>
+        </div>
       </div>
-      <div class="import-note">${icon('sparkle')} En Exportify: <strong>Get Started</strong> → elige playlists → <strong>Export</strong>. Si descargas un ZIP, Davusic lo separa por playlist automáticamente.</div>
+      <div class="exportify-downloads" data-exportify-downloads aria-live="polite">${exportifyDownloadsInner()}</div>
+      <div class="import-actions">
+        <span class="exportify-manual">¿No aparece? <button class="link-btn" data-exportify-file ${disabled ? 'disabled' : ''}>Elige el CSV o ZIP a mano</button></span>
+      </div>
       <div class="import-callout">
         <div class="import-callout__copy">
           <strong>Exportar desde Davusic</strong>
@@ -6846,7 +6921,7 @@ function renderImportSource() {
         </div>
         <button class="btn btn--soft" data-exportify-export ${disabled || !exportable.length ? 'disabled' : ''}>${icon('download')} Exportar ZIP compatible</button>
       </div>
-      <div class="import-note">${icon('shield')} Davusic no comparte cookies ni la sesión de tu navegador. Exportify es un proyecto independiente; se abre en tu navegador.</div>
+      <div class="import-note">${icon('shield')} Davusic no comparte cookies ni la sesión de tu navegador, y los archivos se leen en tu equipo. Exportify es un proyecto independiente que se abre en tu navegador.</div>
       ${tools}
     </div>`;
   }
@@ -6894,6 +6969,7 @@ function importBundleTracks(playlists) {
           album: String(track.album || ''),
           duration: Number(track.duration) || 0,
           uri: String(track.uri || ''),
+          cover: String(track.cover || ''),
         },
         playlist: playlist.name,
         playlistId: playlist.id,
@@ -6942,8 +7018,15 @@ function renderImportReview() {
   </div>`;
 }
 
+let importMatchIndex = { source: null, byId: new Map() };
 function matchForItem(item, matches = state.import.matches) {
-  return (matches || []).find((match) => match.track_id === item.key) || null;
+  if (importMatchIndex.source !== matches) {
+    importMatchIndex = {
+      source: matches,
+      byId: new Map((matches || []).map((match) => [match.track_id, match])),
+    };
+  }
+  return importMatchIndex.byId.get(item.key) || null;
 }
 
 function selectedImportCount() {
@@ -7118,6 +7201,184 @@ async function exportExportifyPlaylist(id) {
   } catch (error) {
     toast(`No se pudo exportar. ${esc(error?.message || error || '')}`, 'bell', 5600);
   }
+}
+
+/* ---------- Exportify: descargas detectadas ---------- */
+
+// Mientras la pestaña de Exportify está abierta, Davusic mira la carpeta de
+// descargas. Tras pulsar «Abrir Exportify» queda «armado»: el primer archivo
+// nuevo que aparezca se importa solo.
+const exportifyScan = {
+  files: [],
+  folder: '',
+  loaded: false,
+  busy: false,
+  timer: 0,
+  signature: '',
+  armedAt: 0,
+  pending: '',
+  imported: new Set(),
+};
+const EXPORTIFY_POLL_MS = 2000;
+const EXPORTIFY_ARMED_MS = 30 * 60 * 1000;
+
+function exportifyFileKey(file) {
+  return `${file.path}|${file.modified}|${file.size}`;
+}
+
+function exportifyPaneActive() {
+  return IS_TAURI && !MOBILE_PREVIEW && els.importModal && !els.importModal.hidden
+    && state.import.tab === 'exportify' && state.import.step === 'source' && !state.import.loading;
+}
+
+function syncExportifyPolling() {
+  const active = exportifyPaneActive();
+  if (active && !exportifyScan.timer) {
+    exportifyScan.timer = window.setInterval(refreshExportifyDownloads, EXPORTIFY_POLL_MS);
+    refreshExportifyDownloads();
+  } else if (!active && exportifyScan.timer) {
+    window.clearInterval(exportifyScan.timer);
+    exportifyScan.timer = 0;
+  }
+}
+
+function exportifyFolderName() {
+  const parts = String(exportifyScan.folder || '').split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || 'Descargas';
+}
+
+function exportifyAgo(seconds) {
+  const elapsed = Math.max(0, Date.now() / 1000 - Number(seconds || 0));
+  if (elapsed < 90) return 'hace un momento';
+  if (elapsed < 3600) return `hace ${Math.round(elapsed / 60)} min`;
+  if (elapsed < 86400) return `hace ${plural(Math.round(elapsed / 3600), 'hora', 'horas')}`;
+  if (elapsed < 30 * 86400) return `hace ${plural(Math.round(elapsed / 86400), 'día', 'días')}`;
+  return new Date(Number(seconds) * 1000).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function exportifyDownloadsInner() {
+  if (!IS_TAURI || MOBILE_PREVIEW) return '';
+  const scan = exportifyScan;
+  const folder = esc(exportifyFolderName());
+  const waiting = scan.armedAt
+    ? `<div class="spotify-loading exportify-waiting"><span class="spinner"></span><span>Esperando la descarga de Exportify en <strong>${folder}</strong>. Se abrirá sola en cuanto termine.</span></div>`
+    : '';
+  if (!scan.loaded) {
+    return `<div class="spotify-loading"><span class="spinner"></span><span>Buscando descargas de Exportify…</span></div>`;
+  }
+  if (!scan.files.length) {
+    return waiting || `<div class="import-note">${icon('clock')} Todavía no hay archivos de Exportify en <strong>${folder}</strong>. Cuando descargues uno aparecerá aquí.</div>`;
+  }
+  const rows = scan.files.map((file, index) => {
+    const done = scan.imported.has(exportifyFileKey(file));
+    const detail = [
+      exportifyAgo(file.modified),
+      plural(file.playlists, 'playlist', 'playlists'),
+      plural(file.tracks, 'canción', 'canciones'),
+      done ? 'ya abierto' : '',
+    ].filter(Boolean).join(' · ');
+    return `<div class="spotify-row">
+      <span class="spotify-row__art">${icon(done ? 'check' : 'file')}</span>
+      <span class="spotify-row__copy"><strong>${esc(file.name)}</strong><span>${esc(detail)}</span></span>
+      <button type="button" class="btn btn--soft spotify-row__action" data-exportify-download="${index}">${icon('plus')} Importar</button>
+    </div>`;
+  }).join('');
+  const all = scan.files.length > 1
+    ? `<button type="button" class="link-btn" data-exportify-download="all">Importar los ${scan.files.length} juntos</button>`
+    : '';
+  return `<div class="exportify-downloads__head"><strong>Detectado en ${folder}</strong><span class="import-actions__spacer"></span>${all}</div>
+    <div class="spotify-list">${rows}</div>
+    ${waiting}`;
+}
+
+function updateExportifyDownloadsDom() {
+  const holder = els.importBody ? qs('[data-exportify-downloads]', els.importBody) : null;
+  if (holder) holder.innerHTML = exportifyDownloadsInner();
+}
+
+async function refreshExportifyDownloads() {
+  const scan = exportifyScan;
+  if (scan.busy || !IS_TAURI) return;
+  scan.busy = true;
+  try {
+    const result = await inv('exportify_downloads');
+    const files = Array.isArray(result?.files) ? result.files : [];
+    const signature = files.map(exportifyFileKey).join('\n');
+    let changed = !scan.loaded || signature !== scan.signature;
+    scan.files = files;
+    scan.folder = String(result?.folder || '');
+    scan.loaded = true;
+    scan.signature = signature;
+    if (!exportifyPaneActive()) return;
+    if (scan.armedAt && Date.now() - scan.armedAt > EXPORTIFY_ARMED_MS) {
+      scan.armedAt = 0;
+      changed = true;
+    }
+    if (scan.armedAt) {
+      const fresh = files.filter((file) => file.modified * 1000 >= scan.armedAt - 2000
+        && !scan.imported.has(exportifyFileKey(file)));
+      const freshKey = fresh.map(exportifyFileKey).join('\n');
+      // Se espera a que la lista de novedades se repita en dos sondeos: así
+      // varias descargas seguidas entran juntas y ninguna a medio escribir.
+      if (fresh.length && freshKey === scan.pending) {
+        scan.pending = '';
+        importExportifyDownloads(fresh.map((file) => file.path), { detected: true });
+        return;
+      }
+      scan.pending = freshKey;
+    }
+    if (changed) updateExportifyDownloadsDom();
+  } catch (_) {
+    scan.loaded = true;
+  } finally {
+    scan.busy = false;
+  }
+}
+
+function openExportifyGuided() {
+  openExternalUrl('https://exportify.net/');
+  if (!IS_TAURI || MOBILE_PREVIEW) return;
+  exportifyScan.armedAt = Date.now();
+  exportifyScan.pending = '';
+  updateExportifyDownloadsDom();
+  syncExportifyPolling();
+}
+
+async function importExportifyDownloads(paths, options = {}) {
+  const list = (paths || []).filter(Boolean);
+  if (!IS_TAURI || !list.length || state.import.loading) return;
+  state.import.tab = 'exportify';
+  state.import.step = 'source';
+  state.import.error = '';
+  state.import.loading = true;
+  state.import.loadingMessage = options.detected
+    ? 'Descarga de Exportify detectada. Leyendo tus playlists…'
+    : 'Leyendo el archivo de Exportify…';
+  renderImport();
+  try {
+    const bundle = await inv('parse_playlist_paths', { paths: list });
+    exportifyScan.files
+      .filter((file) => list.includes(file.path))
+      .forEach((file) => exportifyScan.imported.add(exportifyFileKey(file)));
+    exportifyScan.armedAt = 0;
+    handleImportBundle(bundle);
+  } catch (error) {
+    exportifyScan.armedAt = 0;
+    state.import.loading = false;
+    state.import.error = `No se pudo leer el archivo de Exportify. ${error?.message || error || ''}`;
+    renderImport();
+    toast(`No se pudo importar el archivo. ${esc(error?.message || error || '')}`, 'bell', 5400);
+  }
+}
+
+function handleExportifyDownloadClick(value) {
+  const files = exportifyScan.files;
+  if (value === 'all') {
+    importExportifyDownloads(files.map((file) => file.path));
+    return;
+  }
+  const file = files[Number(value)];
+  if (file) importExportifyDownloads([file.path]);
 }
 
 async function importExportifyFile() {
@@ -7316,6 +7577,7 @@ function commitImportedStreams() {
       album: item.track.album,
       duration: item.track.duration,
       uri: chosen,
+      cover: item.track.cover || '',
     }, { silent: true });
     const name = item.playlist || 'Playlist importada';
     if (!groups.has(name)) groups.set(name, []);

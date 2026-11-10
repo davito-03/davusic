@@ -18,6 +18,7 @@ elif find "$ROOT/src" "$ROOT/frontend" "$ROOT/capabilities" "$ROOT/assets/icons"
 elif [[ "$ROOT/Cargo.toml" -nt "$RELEASE_BIN" ]] \
   || [[ -f "$ROOT/Cargo.lock" && "$ROOT/Cargo.lock" -nt "$RELEASE_BIN" ]] \
   || [[ "$ROOT/build.rs" -nt "$RELEASE_BIN" ]] \
+  || [[ -f "$ROOT/spotify_client_id.txt" && "$ROOT/spotify_client_id.txt" -nt "$RELEASE_BIN" ]] \
   || [[ "$ROOT/tauri.conf.json" -nt "$RELEASE_BIN" ]]; then
   needs_build=1
 fi

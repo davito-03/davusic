@@ -7,7 +7,9 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::models::{ImportBundle, ImportedPlaylist, ImportedTrack};
+use crate::models::{
+    ExportifyDownload, ExportifyDownloads, ImportBundle, ImportedPlaylist, ImportedTrack,
+};
 use crate::paths;
 
 /// Formato mínimo que comparte la interfaz con el exportador. Exportify usa
@@ -145,11 +147,12 @@ pub fn parse_file(path: &Path) -> Result<ImportBundle, String> {
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    // Exportify nombra cada CSV con el nombre de la playlist y guiones bajos.
     let name = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("Playlist importada")
-        .to_string();
+        .replace('_', " ");
     let mut bundle = if extension == "zip" {
         parse_zip(path)?
     } else {
@@ -163,12 +166,189 @@ pub fn parse_file(path: &Path) -> Result<ImportBundle, String> {
         };
         ImportBundle {
             playlists,
-            warnings: Vec::new(),
             origin: path.to_string_lossy().to_string(),
+            ..Default::default()
         }
     };
     bundle.origin = path.to_string_lossy().to_string();
     finish(bundle)
+}
+
+/// Lee varios archivos y los presenta como una sola importación.
+pub fn parse_files(paths: &[std::path::PathBuf]) -> Result<ImportBundle, String> {
+    match paths {
+        [] => return Err("No hay archivos que importar.".into()),
+        [single] => return parse_file(single),
+        _ => {}
+    }
+    let mut merged = ImportBundle {
+        origin: format!("Exportify · {} archivos", paths.len()),
+        ..Default::default()
+    };
+    let mut first_error = None;
+    for path in paths {
+        match parse_file(path) {
+            Ok(mut bundle) => {
+                merged.playlists.append(&mut bundle.playlists);
+                merged.warnings.append(&mut bundle.warnings);
+            }
+            Err(error) => {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                merged.warnings.push(format!("{name}: {error}"));
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    if merged.playlists.is_empty() {
+        return Err(first_error
+            .unwrap_or_else(|| "Los archivos no contenían playlists reconocibles.".into()));
+    }
+    finish(merged)
+}
+
+// ---------- descargas de Exportify ----------
+
+const MAX_PLAYLIST_FILE: u64 = 64 * 1024 * 1024;
+
+/// Exportify (y la exportación de Davusic) siempre encabezan sus CSV con estas
+/// columnas. Sirve para no confundir cualquier otro CSV de Descargas con una playlist.
+fn is_exportify_header(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+    let first = head
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    first.contains("track uri") && first.contains("track name")
+}
+
+fn is_exportify_file(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    match extension.as_str() {
+        "csv" => {
+            let mut head = Vec::with_capacity(4096);
+            file.take(4096).read_to_end(&mut head).is_ok() && is_exportify_header(&head)
+        }
+        "zip" => {
+            let Ok(mut archive) = zip::ZipArchive::new(file) else {
+                return false;
+            };
+            let mut checked = 0;
+            for index in 0..archive.len().min(400) {
+                let Ok(entry) = archive.by_index(index) else {
+                    continue;
+                };
+                let name = entry.name().to_ascii_lowercase();
+                if entry.is_dir() || !name.ends_with(".csv") || name.contains("__macosx") {
+                    continue;
+                }
+                let mut head = Vec::with_capacity(4096);
+                if entry.take(4096).read_to_end(&mut head).is_ok() && is_exportify_header(&head) {
+                    return true;
+                }
+                checked += 1;
+                if checked >= 3 {
+                    break;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Resultado ya calculado por archivo: (modificación, tamaño) → (playlists, pistas).
+type DownloadCache = HashMap<std::path::PathBuf, (u64, u64, Option<(u32, u32)>)>;
+static DOWNLOAD_CACHE: parking_lot::Mutex<Option<DownloadCache>> = parking_lot::Mutex::new(None);
+
+/// Busca en una carpeta (normalmente Descargas) los CSV y ZIP de Exportify
+/// más recientes. Es barato de repetir: cada archivo solo se analiza una vez
+/// mientras no cambie, y las descargas a medias se ignoran hasta completarse.
+pub fn find_exportify_downloads(folder: &Path) -> ExportifyDownloads {
+    const MAX_CANDIDATES: usize = 40;
+    const MAX_RESULTS: usize = 8;
+    let mut out = ExportifyDownloads {
+        folder: folder.to_string_lossy().to_string(),
+        files: Vec::new(),
+    };
+    let Ok(entries) = fs::read_dir(folder) else {
+        return out;
+    };
+    let mut candidates: Vec<(u64, u64, std::path::PathBuf)> = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !matches!(extension.as_str(), "csv" | "zip") {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_PLAYLIST_FILE {
+            continue;
+        }
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        candidates.push((modified, meta.len(), path));
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.truncate(MAX_CANDIDATES);
+
+    let mut guard = DOWNLOAD_CACHE.lock();
+    let cache = guard.get_or_insert_with(HashMap::new);
+    cache.retain(|path, _| candidates.iter().any(|(_, _, candidate)| candidate == path));
+    for (modified, size, path) in candidates {
+        let counts = match cache.get(&path) {
+            Some((m, s, counts)) if *m == modified && *s == size => *counts,
+            _ => {
+                let counts = if is_exportify_file(&path) {
+                    parse_file(&path).ok().map(|bundle| {
+                        let tracks: usize = bundle.playlists.iter().map(|p| p.tracks.len()).sum();
+                        (bundle.playlists.len() as u32, tracks as u32)
+                    })
+                } else {
+                    None
+                };
+                cache.insert(path.clone(), (modified, size, counts));
+                counts
+            }
+        };
+        let Some((playlists, tracks)) = counts else {
+            continue;
+        };
+        out.files.push(ExportifyDownload {
+            name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            path: path.to_string_lossy().to_string(),
+            modified,
+            size,
+            playlists,
+            tracks,
+        });
+        if out.files.len() >= MAX_RESULTS {
+            break;
+        }
+    }
+    out
 }
 
 fn parse_zip(path: &Path) -> Result<ImportBundle, String> {
@@ -468,9 +648,12 @@ fn parse_csv(content: &str, default_name: &str, filename: &str) -> Vec<ImportedP
         "song uri",
     ];
 
+    let cover_aliases = ["album image url", "image url", "cover url", "artwork url"];
+
     let first = &records[0];
+    let cover_idx = find_column(first, &cover_aliases);
     let playlist_idx = find_column(first, &playlist_aliases);
-    let uri_idx = find_column(first, &uri_aliases);
+    let uri_idx = find_column_excluding(first, &uri_aliases, &[cover_idx]);
     let title_idx = find_column_excluding(first, &title_aliases, &[playlist_idx, uri_idx]);
     let artist_idx = find_column_excluding(first, &artist_aliases, &[playlist_idx, title_idx]);
     let album_idx = find_column_excluding(first, &album_aliases, &[playlist_idx, title_idx]);
@@ -527,6 +710,11 @@ fn parse_csv(content: &str, default_name: &str, filename: &str) -> Vec<ImportedP
             .filter(|name| !name.trim().is_empty())
             .cloned()
             .unwrap_or_else(|| default_name.to_string());
+        let cover = cover_idx
+            .and_then(|idx| fields.get(idx))
+            .filter(|url| url.starts_with("https://"))
+            .cloned()
+            .unwrap_or_default();
         let track = ImportedTrack {
             id: String::new(),
             title,
@@ -534,6 +722,7 @@ fn parse_csv(content: &str, default_name: &str, filename: &str) -> Vec<ImportedP
             album,
             duration,
             uri,
+            cover,
         };
         match group_index.get(&group_name) {
             Some(index) => groups[*index].1.push(track),
@@ -690,6 +879,7 @@ fn parse_text(content: &str, default_name: &str) -> Vec<ImportedPlaylist> {
                 album: album.trim().to_string(),
                 duration: pending_duration.max(0.0),
                 uri: String::new(),
+                cover: String::new(),
             },
         );
         pending_duration = 0.0;
@@ -959,6 +1149,9 @@ fn json_track_list(value: &Value) -> Option<Vec<ImportedTrack>> {
             ],
         )
         .unwrap_or_default();
+        let cover = json_string(object, &["cover", "image", "thumbnail", "albumImageUrl"])
+            .filter(|url| url.starts_with("https://"))
+            .unwrap_or_default();
         tracks.push(ImportedTrack {
             id: String::new(),
             title,
@@ -966,6 +1159,7 @@ fn json_track_list(value: &Value) -> Option<Vec<ImportedTrack>> {
             album,
             duration,
             uri,
+            cover,
         });
     }
     Some(tracks)
@@ -1045,6 +1239,22 @@ fn json_artist(value: &Value) -> String {
 pub fn spotify_from_url(url: &str) -> Result<ImportBundle, String> {
     let id = extract_spotify_playlist_id(url)
         .ok_or_else(|| "No reconozco ese enlace de playlist de Spotify.".to_string())?;
+    let playlist = spotify_public_playlist(&id)?;
+    let visible = playlist.tracks.len();
+    let bundle = ImportBundle {
+        playlists: vec![playlist],
+        warnings: vec![format!(
+            "Spotify muestra {visible} pistas en su reproductor público. Si la playlist tiene más, conecta tu cuenta o importa su ZIP de Exportify."
+        )],
+        origin: format!("https://open.spotify.com/playlist/{id}"),
+        ..Default::default()
+    };
+    finish(bundle)
+}
+
+/// Lee lo que el reproductor público incrustable de Spotify enseña de una
+/// playlist: sin sesión, pero limitado a las primeras pistas y sin álbum.
+pub(crate) fn spotify_public_playlist(id: &str) -> Result<ImportedPlaylist, String> {
     let embed = format!("https://open.spotify.com/embed/playlist/{id}");
     let client = crate::net::blocking_client_builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -1063,6 +1273,10 @@ pub fn spotify_from_url(url: &str) -> Result<ImportBundle, String> {
     let html = response
         .text()
         .map_err(|error| format!("No se pudo leer la respuesta de Spotify: {error}"))?;
+    parse_spotify_embed(&html)
+}
+
+fn parse_spotify_embed(html: &str) -> Result<ImportedPlaylist, String> {
     if html.len() < 1000 {
         return Err("Spotify devolvió una página vacía. Prueba con un ZIP exportado.".into());
     }
@@ -1092,6 +1306,9 @@ pub fn spotify_from_url(url: &str) -> Result<ImportBundle, String> {
         })?;
     let mut tracks = Vec::new();
     for item in track_list {
+        if item.get("entityType").and_then(Value::as_str) == Some("episode") {
+            continue;
+        }
         let title = item
             .get("title")
             .and_then(Value::as_str)
@@ -1105,6 +1322,8 @@ pub fn spotify_from_url(url: &str) -> Result<ImportBundle, String> {
             .get("subtitle")
             .and_then(Value::as_str)
             .unwrap_or("")
+            // El reproductor separa los artistas con espacios duros.
+            .replace('\u{a0}', " ")
             .trim()
             .to_string();
         let duration_ms = item.get("duration").and_then(Value::as_f64).unwrap_or(0.0);
@@ -1120,6 +1339,7 @@ pub fn spotify_from_url(url: &str) -> Result<ImportBundle, String> {
             album: String::new(),
             duration: duration_ms / 1000.0,
             uri,
+            cover: String::new(),
         });
     }
     if tracks.is_empty() {
@@ -1128,21 +1348,13 @@ pub fn spotify_from_url(url: &str) -> Result<ImportBundle, String> {
                 .into(),
         );
     }
-    let visible = tracks.len();
-    let bundle = ImportBundle {
-        playlists: vec![ImportedPlaylist {
-            id: String::new(),
-            name,
-            description: "Importada desde un enlace público de Spotify.".into(),
-            source: "spotify".into(),
-            tracks,
-        }],
-        warnings: vec![format!(
-            "Spotify muestra {visible} pistas en su reproductor público. Para una playlist completa, importa su ZIP de Exportify."
-        )],
-        origin: embed,
-    };
-    finish(bundle)
+    Ok(ImportedPlaylist {
+        id: String::new(),
+        name,
+        description: "Importada desde un enlace público de Spotify.".into(),
+        source: "spotify".into(),
+        tracks,
+    })
 }
 
 pub(crate) fn extract_spotify_playlist_id(url: &str) -> Option<String> {
@@ -1194,6 +1406,7 @@ pub fn youtube_from_url(url: &str) -> Result<ImportBundle, String> {
             "Las pistas de YouTube se descargan del vídeo original que indica la playlist.".into(),
         ],
         origin: url.to_string(),
+        ..Default::default()
     };
     finish(bundle)
 }
@@ -1201,8 +1414,8 @@ pub fn youtube_from_url(url: &str) -> Result<ImportBundle, String> {
 pub fn parse_text_pasted(text: &str, name: &str) -> Result<ImportBundle, String> {
     let bundle = ImportBundle {
         playlists: parse_text(text, name),
-        warnings: Vec::new(),
         origin: "Texto pegado".into(),
+        ..Default::default()
     };
     finish(bundle)
 }
@@ -1415,6 +1628,113 @@ Sal y miel,\"Lúa, Berta\",Mareas,spotify:track:def\n";
         assert_eq!(bundle.playlists[0].name, "Noche");
         assert_eq!(bundle.playlists[0].tracks[0].title, "Via 88");
         assert_eq!(bundle.playlists[0].tracks[0].duration, 78.0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn exportify_csv_keeps_album_art_and_real_uri() {
+        let content =
+            "Track URI,Track Name,Album Name,Artist Name(s),Album Image URL,Duration (ms)\n\
+spotify:track:abc,Bajamar,Mareas,Lúa,https://i.scdn.co/image/abc,88000\n";
+        let playlists = parse_csv(content, "Exportify", "Exportify.csv");
+        let track = &playlists[0].tracks[0];
+        assert_eq!(track.uri, "spotify:track:abc");
+        assert_eq!(track.cover, "https://i.scdn.co/image/abc");
+        assert_eq!(track.duration, 88.0);
+    }
+
+    #[test]
+    fn public_embed_page_is_parsed() {
+        let data = serde_json::json!({"props": {"pageProps": {"state": {"data": {"entity": {
+            "name": "Noche",
+            "trackList": [
+                {"uri": "spotify:track:via", "title": "Vía 88", "subtitle": "Nocturno 88,\u{a0}Lúa",
+                 "duration": 78000, "entityType": "track"},
+                {"uri": "spotify:episode:x", "title": "Un episodio", "subtitle": "Podcast",
+                 "duration": 1000, "entityType": "episode"}
+            ]
+        }}}}}});
+        let html = format!(
+            "<html>{}<script id=\"__NEXT_DATA__\" type=\"application/json\">{data}</script></html>",
+            " ".repeat(1200)
+        );
+        let playlist = parse_spotify_embed(&html).expect("la página debería leerse");
+        assert_eq!(playlist.name, "Noche");
+        assert_eq!(playlist.tracks.len(), 1);
+        assert_eq!(playlist.tracks[0].artist, "Nocturno 88, Lúa");
+        assert_eq!(playlist.tracks[0].duration, 78.0);
+    }
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("davusic-{tag}-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    const EXPORTIFY_CSV: &str = "\"Track URI\",\"Track Name\",\"Artist URI(s)\",\"Artist Name(s)\",\"Album URI\",\"Album Name\",\"Album Artist URI(s)\",\"Album Artist Name(s)\",\"Album Release Date\",\"Album Image URL\",\"Disc Number\",\"Track Number\",\"Track Duration (ms)\",\"Track Preview URL\",\"Explicit\",\"Popularity\",\"ISRC\",\"Added By\",\"Added At\"\n\
+\"spotify:track:via\",\"Vía 88\",\"spotify:artist:n88\",\"Nocturno 88, Lúa\",\"spotify:album:aut\",\"Autopista\",\"spotify:artist:n88\",\"Nocturno 88\",\"2024-01-01\",\"https://i.scdn.co/image/aut\",\"1\",\"3\",\"78000\",\"\",\"false\",\"40\",\"ES0000000001\",\"spotify:user:davo\",\"2025-01-01T00:00:00Z\"\n";
+
+    #[test]
+    fn real_exportify_columns_map_to_the_right_fields() {
+        let playlists = parse_csv(EXPORTIFY_CSV, "mi lista", "mi_lista.csv");
+        let track = &playlists[0].tracks[0];
+        assert_eq!(track.title, "Vía 88");
+        assert_eq!(track.artist, "Nocturno 88, Lúa");
+        assert_eq!(track.album, "Autopista");
+        assert_eq!(track.duration, 78.0);
+        assert_eq!(track.uri, "spotify:track:via");
+        assert_eq!(track.cover, "https://i.scdn.co/image/aut");
+    }
+
+    #[test]
+    fn downloads_folder_only_lists_exportify_files() {
+        let root = scratch_dir("downloads");
+        std::fs::write(root.join("mi_lista.csv"), EXPORTIFY_CSV).unwrap();
+        std::fs::write(
+            root.join("movimientos.csv"),
+            "Fecha,Concepto,Importe\n2026-01-01,Nómina,1000\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("a_medias.zip"), b"PK\x03\x04 incompleto").unwrap();
+        std::fs::write(root.join("notas.txt"), "Lúa - Bajamar\n").unwrap();
+        save_exportify_zip(
+            &root.join("spotify_playlists.zip"),
+            &[ExportPlaylist {
+                name: "Noche".into(),
+                tracks: vec![ExportTrack {
+                    title: "Cromo".into(),
+                    artist: "Vera Nox".into(),
+                    ..Default::default()
+                }],
+            }],
+        )
+        .unwrap();
+
+        let found = find_exportify_downloads(&root);
+        let mut names: Vec<&str> = found.files.iter().map(|file| file.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["mi_lista.csv", "spotify_playlists.zip"]);
+        let csv = found
+            .files
+            .iter()
+            .find(|file| file.name == "mi_lista.csv")
+            .unwrap();
+        assert_eq!((csv.playlists, csv.tracks), (1, 1));
+
+        let paths: Vec<std::path::PathBuf> = found
+            .files
+            .iter()
+            .map(|file| std::path::PathBuf::from(&file.path))
+            .collect();
+        let bundle = parse_files(&paths).expect("los dos archivos deberían unirse");
+        let mut playlists: Vec<&str> = bundle.playlists.iter().map(|p| p.name.as_str()).collect();
+        playlists.sort();
+        assert_eq!(playlists, ["Noche", "mi lista"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

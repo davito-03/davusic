@@ -8,7 +8,7 @@
 
 Davusic está hecho con **Tauri 2 + Rust** y un frontend estático sin bundler. No hay anuncios, telemetría ni servidor propio. La cuenta de Spotify es opcional y **solo se usa para leer metadatos**: Davusic no reproduce el catálogo de Spotify ni elude DRM.
 
-> Estado: **0.1.1**, primera versión funcional con la identidad visual de Davito. Pensada para Niri/DMS en CachyOS, pero funciona en cualquier escritorio Linux moderno con Wayland o X11 y en Windows 10/11. Android se distribuye como vista previa: interfaz y demo, sin biblioteca local, streaming ni MPRIS. Incluye restablecimiento de fábrica y exportación compatible con Exportify.
+> Estado: **0.1.2**. Mejora la importación desde Spotify (Exportify asistido, carátulas, coincidencias más fiables), precarga la siguiente canción y acelera el escaneo de la biblioteca. Pensada para Niri/DMS en CachyOS, pero funciona en cualquier escritorio Linux moderno con Wayland o X11 y en Windows 10/11. Android se distribuye como vista previa: interfaz y demo, sin biblioteca local, streaming ni MPRIS. Incluye restablecimiento de fábrica y exportación compatible con Exportify.
 
 ---
 
@@ -21,19 +21,19 @@ Davusic está hecho con **Tauri 2 + Rust** y un frontend estático sin bundler. 
 
 ## Funciones
 
-- **Biblioteca local**: escanea MP3, FLAC, OGG, Opus, M4A, WAV, AIFF, WavPack y otros formatos con `lofty`; lee etiquetas, carátulas, álbumes y artistas.
+- **Biblioteca local**: escanea MP3, FLAC, OGG, Opus, M4A, WAV, AIFF, WavPack y otros formatos con `lofty`; lee etiquetas, carátulas, álbumes y artistas. El escaneo es incremental y en paralelo: al arrancar solo se releen los archivos que han cambiado.
 - **Reproducción nativa**: motor `rodio` + Symphonia, cola, aleatorio, repetición, búsqueda de posición, volumen, silencio y reproductor inmersivo.
-- **Streaming**: búsqueda en YouTube (`ytsearch`) y reproducción con `yt-dlp`; el audio se guarda en caché y se poda automáticamente.
+- **Streaming**: búsqueda en YouTube y en el catálogo de canciones de YouTube Music, y reproducción con `yt-dlp`. La coincidencia se elige comparando título, artista y duración, se recuerda para no repetir la búsqueda y la siguiente canción de la cola se precarga mientras suena la actual. El audio se guarda en caché y se poda automáticamente.
 - **Búsqueda estilo Spotify**: biblioteca y YouTube en la misma barra; un resultado en línea se puede reproducir al instante.
 - **Para ti**: recomendaciones privadas construidas con reproducciones, canciones completadas, saltos, búsquedas, likes y playlists.
 - **Letras**: LRCLIB con letra sincronizada LRC o texto plano; se puede hacer clic en una línea para saltar a ese punto.
 - **Importación**:
-  - Pestaña **Exportify** con enlace a [exportify.net](https://exportify.net/) y selector de CSV/ZIP.
+  - Pestaña **Exportify** asistida: abre [exportify.net](https://exportify.net/), inicia sesión con tu cuenta de Spotify (no hace falta Premium ni configurar nada) y Davusic detecta la descarga en tu carpeta de descargas y la importa, con las carátulas de los álbumes. También lista los CSV/ZIP de Exportify que ya tuvieras descargados.
   - ZIP de **Exportify**, Spotify o Google Takeout.
   - CSV/TSV de **Google Takeout** / YouTube Music.
   - Enlaces públicos de Spotify y enlaces/playlists de YouTube Music.
   - Archivos JSON, M3U/M3U8, TXT y listas pegadas a mano.
-  - **Spotify OAuth**: listado, **Importar todas** (Me gusta + playlists) y traer una a una.
+  - **Spotify OAuth**: listado, **Importar todas** (Me gusta + playlists, leídas en paralelo) y traer una a una. Las playlists que la API no deja leer se traen desde su página pública.
 - **Exportar a Exportify**: genera un ZIP con un CSV por playlist (o un CSV suelto desde el detalle de una playlist) con las columnas `Track Name`, `Artist Name(s)`, `Album Name`, `Duration (ms)`, `Track URI` y `Playlist Name`.
 - **Me gusta y playlists**: crea o fusiona playlists importadas, evita duplicados y lleva las listas tipo *Liked Songs* a **Biblioteca → Me gusta**.
 - **Restablecimiento de fábrica**: borra biblioteca indexada, playlists, likes, historial, señales del algoritmo, preferencias, sesión de Spotify y cachés en un solo paso, conservando tus archivos de música y `yt-dlp`.
@@ -188,6 +188,20 @@ El restablecimiento no se puede deshacer. Si quieres conservar el catálogo, haz
 
 Davusic no reproduce audio de Spotify. Si conectas tu cuenta, solo importa metadatos (título, artista, álbum, duración y enlace) para buscarlos en YouTube.
 
+> **¿Sin Premium?** Usa la pestaña **Exportify** del importador: funciona con cualquier cuenta de Spotify y no necesita Client ID. Conectar la cuenta directamente exige una app de Spotify Developer, y Spotify pide Premium a su propietario.
+
+### Inicio de sesión directo
+
+Si el binario se compiló con un Client ID incluido, no hay nada que configurar: pulsa **Conectar con Spotify**, inicia sesión en el navegador y acepta el consentimiento oficial, igual que en Exportify.
+
+Para incluirlo en tus compilaciones, registra una vez la app de Davusic en [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) con el Redirect URI `http://127.0.0.1:43827/callback` y deja su Client ID en `spotify_client_id.txt` (raíz del repositorio) o en la variable de entorno `DAVUSIC_SPOTIFY_CLIENT_ID` al compilar. No es un secreto: el flujo PKCE no usa Client Secret.
+
+Mientras esa app esté en **modo desarrollo**, Spotify solo deja iniciar sesión a las cuentas que añadas en *User Management* del panel (y exige Premium a la cuenta propietaria). Para abrirla a cualquiera hay que solicitar la cuota ampliada a Spotify.
+
+### Con tu propio Client ID
+
+Sigue disponible desde «Usar mi propio Client ID», y es el único camino si el binario no trae uno:
+
 1. Crea una app en [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
 2. Añade exactamente este **Redirect URI**: `http://127.0.0.1:43827/callback`.
 3. Copia el **Client ID** (no hace falta el Client Secret) y pégalo en Ajustes o en el importador.
@@ -231,8 +245,8 @@ El repositorio oficial es [davito-03/davusic](https://github.com/davito-03/davus
 
 ```bash
 git push origin main
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 La release incluye `.deb`, `.AppImage`, instaladores NSIS/MSI y `davusic-android-preview.apk`. Las compilaciones de Windows y Android se realizan en GitHub Actions, no en local.

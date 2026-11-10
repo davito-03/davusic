@@ -155,13 +155,15 @@ async fn scan_in_background(
     paths: Arc<Paths>,
     config: Config,
     previous: usize,
+    force: bool,
 ) -> Result<LibraryScanResult, String> {
     let epoch = app.state::<AppState>().data_epoch.load(Ordering::SeqCst);
     let handle = app.clone();
-    let snapshot =
-        tauri::async_runtime::spawn_blocking(move || library::scan(&paths, &config, Some(&handle)))
-            .await
-            .map_err(|error| format!("El escaneo se interrumpió: {error}"))?;
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        library::scan(&paths, &config, Some(&handle), force)
+    })
+    .await
+    .map_err(|error| format!("El escaneo se interrumpió: {error}"))?;
     let state = app.state::<AppState>();
     if state.data_epoch.load(Ordering::SeqCst) != epoch {
         return Err("El restablecimiento de fábrica canceló el escaneo.".into());
@@ -183,7 +185,8 @@ async fn rescan_library(
 ) -> Result<LibraryScanResult, String> {
     let config = state.config.lock().clone();
     let previous = state.library.lock().tracks.len();
-    scan_in_background(app, state.paths.clone(), config, previous).await
+    // Un reescaneo pedido a mano relee todas las etiquetas y carátulas.
+    scan_in_background(app, state.paths.clone(), config, previous, true).await
 }
 
 #[tauri::command]
@@ -224,7 +227,7 @@ async fn add_and_scan_folder(
     write_config(&state.paths, &config);
     *state.config.lock() = config.clone();
     let previous = state.library.lock().tracks.len();
-    scan_in_background(app, state.paths.clone(), config, previous).await
+    scan_in_background(app, state.paths.clone(), config, previous, false).await
 }
 
 #[tauri::command]
@@ -243,7 +246,7 @@ async fn remove_music_folder(
     write_config(&state.paths, &config);
     *state.config.lock() = config.clone();
     let previous = state.library.lock().tracks.len();
-    scan_in_background(app, state.paths.clone(), config, previous).await
+    scan_in_background(app, state.paths.clone(), config, previous, false).await
 }
 
 #[tauri::command]
@@ -294,8 +297,9 @@ async fn play_track(
         };
         let title = request.title.clone();
         let artist = request.artist.clone();
+        let wanted_duration = request.duration;
         let prepared = tauri::async_runtime::spawn_blocking(move || {
-            youtube::prepare_playback(&paths, &hint, &title, &artist)
+            youtube::prepare_playback(&paths, &hint, &title, &artist, wanted_duration)
         })
         .await
         .map_err(|error| format!("La preparación se interrumpió: {error}"))??;
@@ -352,6 +356,43 @@ async fn play_track(
         "uri": resolved_uri,
         "cover": resolved_cover,
         "video_id": resolved_video_id,
+    }))
+}
+
+/// Deja lista la siguiente canción de la cola (búsqueda y audio en caché)
+/// mientras suena la actual, para que el cambio de pista sea inmediato.
+#[tauri::command]
+async fn prefetch_track(
+    state: tauri::State<'_, AppState>,
+    request: PlaybackRequest,
+) -> Result<serde_json::Value, String> {
+    let mut request = request;
+    if request.path.trim().is_empty() && !request.uri.trim().is_empty() {
+        request.path = request.uri.clone();
+    }
+    if !youtube::needs_prepare(&request) {
+        return Ok(serde_json::json!({ "ready": true }));
+    }
+    let epoch = state.data_epoch.load(Ordering::SeqCst);
+    let paths = state.paths.clone();
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        youtube::prepare_playback(
+            &paths,
+            &request.path,
+            &request.title,
+            &request.artist,
+            request.duration,
+        )
+    })
+    .await
+    .map_err(|error| format!("La precarga se interrumpió: {error}"))??;
+    if state.data_epoch.load(Ordering::SeqCst) != epoch {
+        return Err("El restablecimiento de fábrica canceló la precarga.".into());
+    }
+    Ok(serde_json::json!({
+        "ready": true,
+        "uri": prepared.url,
+        "video_id": prepared.video_id,
     }))
 }
 
@@ -536,6 +577,30 @@ fn export_exportify_csv(playlist: ExportPlaylist) -> Result<Option<String>, Stri
 #[tauri::command]
 fn parse_playlist_path(path: String) -> Result<ImportBundle, String> {
     playlist_import::parse_file(Path::new(&path))
+}
+
+/// Importa de una vez varios archivos (por ejemplo, los CSV sueltos de Exportify).
+#[tauri::command]
+async fn parse_playlist_paths(paths: Vec<String>) -> Result<ImportBundle, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+        playlist_import::parse_files(&paths)
+    })
+    .await
+    .map_err(|error| format!("La importación se interrumpió: {error}"))?
+}
+
+/// Lista los CSV/ZIP de Exportify que haya en la carpeta de descargas.
+#[tauri::command]
+async fn exportify_downloads() -> Result<models::ExportifyDownloads, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let folder = dirs::download_dir()
+            .or_else(|| dirs::home_dir().map(|home| home.join("Downloads")))
+            .unwrap_or_default();
+        playlist_import::find_exportify_downloads(&folder)
+    })
+    .await
+    .map_err(|error| format!("No se pudo revisar la carpeta de descargas: {error}"))
 }
 
 #[tauri::command]
@@ -822,6 +887,7 @@ async fn factory_reset(
     *state.library.lock() = LibrarySnapshot::default();
     state.play_generation.fetch_add(1, Ordering::SeqCst);
     state.data_epoch.fetch_add(1, Ordering::SeqCst);
+    youtube::forget_matches();
 
     let paths = state.paths.clone();
     let mut report = tauri::async_runtime::spawn_blocking(move || reset_storage(&paths))
@@ -859,7 +925,8 @@ async fn match_import_tracks(
             Arc::new(StdMutex::new((0..total).map(|_| None).collect()));
         let next = Arc::new(AtomicUsize::new(0));
         let done = Arc::new(AtomicUsize::new(0));
-        let search_budget = Arc::new(AtomicUsize::new(80));
+        // Tope de búsquedas por tanda; el resto se resuelve al reproducir.
+        let search_budget = Arc::new(AtomicUsize::new(300));
 
         std::thread::scope(|scope| {
             for _ in 0..workers {
@@ -880,27 +947,33 @@ async fn match_import_tracks(
                     let mut error = None;
                     if let Some(direct) = youtube::direct_candidate(&track.uri) {
                         candidates.push(direct);
+                    } else if let Some(known) =
+                        youtube::cached_match(&paths, &track.title, &track.artist)
+                            .and_then(|id| youtube::direct_candidate(&id))
+                    {
+                        candidates.push(known);
                     } else if search_budget
                         .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                         .is_ok()
                     {
-                        let query = if track.artist.trim().is_empty() {
-                            track.title.clone()
-                        } else {
-                            format!("{} {}", track.artist.trim(), track.title.trim())
-                        };
-                        match youtube::search_with_limit(&paths, &query, 3) {
-                            Ok(mut found) => {
-                                for candidate in &mut found {
-                                    candidate.score = youtube::score_candidate(
-                                        candidate,
+                        match youtube::resolve_candidates(
+                            &paths,
+                            &track.title,
+                            &track.artist,
+                            track.duration,
+                        ) {
+                            Ok(found) => {
+                                if let Some(top) = found
+                                    .first()
+                                    .filter(|top| top.score >= youtube::CONFIDENT_SCORE)
+                                {
+                                    youtube::remember_match(
+                                        &paths,
                                         &track.title,
                                         &track.artist,
-                                        track.duration,
+                                        &top.video_id,
                                     );
                                 }
-                                found.sort_by(|a, b| b.score.cmp(&a.score));
-                                found.truncate(5);
                                 candidates = found;
                             }
                             Err(message) => error = Some(message),
@@ -913,7 +986,7 @@ async fn match_import_tracks(
                     }
                     let best = candidates
                         .first()
-                        .filter(|candidate| candidate.score >= 20)
+                        .filter(|candidate| candidate.score >= youtube::CONFIDENT_SCORE)
                         .cloned();
                     let result = ImportMatch {
                         track_id: track.id.clone(),
@@ -1047,7 +1120,7 @@ async fn download_import_tracks(
                 }
             }
         }
-        let library = library::scan(&paths, &config, Some(&handle));
+        let library = library::scan(&paths, &config, Some(&handle), false);
         (downloaded, errors, library)
     })
     .await
@@ -1174,7 +1247,8 @@ pub fn run() {
                     .spawn(move || {
                         let state = app_handle.state::<AppState>();
                         let config = state.config.lock().clone();
-                        let snapshot = library::scan(&state.paths, &config, Some(&app_handle));
+                        let snapshot =
+                            library::scan(&state.paths, &config, Some(&app_handle), false);
                         library::save_cache(&state.paths, &snapshot);
                         *state.library.lock() = snapshot.clone();
                         let _ = app_handle.emit("library-updated", snapshot);
@@ -1191,6 +1265,7 @@ pub fn run() {
             rescan_library,
             show_in_folder,
             play_track,
+            prefetch_track,
             pause_playback,
             resume_playback,
             stop_playback,
@@ -1204,6 +1279,8 @@ pub fn run() {
             export_exportify_zip,
             export_exportify_csv,
             parse_playlist_path,
+            parse_playlist_paths,
+            exportify_downloads,
             parse_playlist_text,
             import_playlist_url,
             match_import_tracks,

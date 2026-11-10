@@ -188,21 +188,49 @@ fn ytdlp(paths: &Paths) -> Result<PathBuf, String> {
     })
 }
 
-pub fn search(paths: &Paths, query: &str) -> Result<Vec<MatchCandidate>, String> {
-    search_with_limit(paths, query, 6)
-}
-
 pub fn search_with_limit(
     paths: &Paths,
     query: &str,
     limit: usize,
 ) -> Result<Vec<MatchCandidate>, String> {
-    let bin = ytdlp(paths)?;
     let query = query.trim();
     if query.is_empty() {
         return Ok(Vec::new());
     }
     let count = limit.clamp(1, 20);
+    flat_search(paths, &format!("ytsearch{count}:{query}"), count)
+}
+
+/// Filtro «Canciones» de YouTube Music: devuelve la pista de audio oficial en
+/// lugar de videoclips, directos o vídeos con letra.
+const MUSIC_SONGS_FILTER: &str = "EgWKAQIIAWoKEAoQAxAEEAkQBQ%3D%3D";
+
+/// Busca en el catálogo de canciones de YouTube Music. El listado plano solo
+/// trae título e identificador, así que quien llama debe puntuar con cuidado.
+pub fn search_music(
+    paths: &Paths,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<MatchCandidate>, String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let count = limit.clamp(1, 20);
+    let target = format!(
+        "https://music.youtube.com/search?q={}&sp={MUSIC_SONGS_FILTER}",
+        crate::spotify::url_encode(query)
+    );
+    let mut found = flat_search(paths, &target, count)?;
+    found.retain(|candidate| !candidate.video_id.is_empty());
+    for candidate in &mut found {
+        candidate.url = format!("https://www.youtube.com/watch?v={}", candidate.video_id);
+    }
+    Ok(found)
+}
+
+fn flat_search(paths: &Paths, target: &str, count: usize) -> Result<Vec<MatchCandidate>, String> {
+    let bin = ytdlp(paths)?;
     let output = Command::new(bin)
         .args([
             "--ignore-config",
@@ -214,9 +242,11 @@ pub fn search_with_limit(
             "15",
             "--retries",
             "1",
-            "--dump-single-json",
+            "--playlist-end",
         ])
-        .arg(format!("ytsearch{count}:{query}"))
+        .arg(count.to_string())
+        .arg("--dump-single-json")
+        .arg(target)
         .output()
         .map_err(|error| format!("No se pudo ejecutar yt-dlp: {error}"))?;
     if !output.status.success() && output.stdout.is_empty() {
@@ -233,13 +263,7 @@ pub fn search_with_limit(
         .cloned()
         .or_else(|| data.as_array().cloned())
         .unwrap_or_default();
-    let mut candidates = Vec::new();
-    for entry in entries {
-        if let Some(candidate) = candidate_from_entry(&entry) {
-            candidates.push(candidate);
-        }
-    }
-    Ok(candidates)
+    Ok(entries.iter().filter_map(candidate_from_entry).collect())
 }
 
 fn candidate_from_entry(entry: &Value) -> Option<MatchCandidate> {
@@ -353,14 +377,77 @@ fn split_title_artist(title: &str, channel: &str) -> (String, String) {
     (title.to_string(), String::new())
 }
 
+/// Primer artista de una lista «A, B; C». Es el que suele dar nombre al canal.
+pub fn primary_artist(artist: &str) -> &str {
+    artist.split([',', ';']).next().unwrap_or("").trim()
+}
+
+/// Spotify escribe las ediciones como «Título - Remastered 2011». Ese sufijo
+/// casi nunca aparece igual en YouTube, así que se compara el título base.
+fn core_title(title: &str) -> &str {
+    const EDITION_WORDS: [&str; 22] = [
+        "remaster",
+        "version",
+        "versión",
+        "edit",
+        "mix",
+        "mono",
+        "stereo",
+        "deluxe",
+        "bonus",
+        "single",
+        "live",
+        "directo",
+        "acoustic",
+        "acústic",
+        "feat",
+        "from ",
+        "original",
+        "anniversary",
+        "demo",
+        "explicit",
+        "instrumental",
+        "soundtrack",
+    ];
+    if let Some((head, rest)) = title.split_once(" - ") {
+        let rest = rest.to_lowercase();
+        if !head.trim().is_empty() && EDITION_WORDS.iter().any(|word| rest.contains(word)) {
+            return head.trim();
+        }
+    }
+    title
+}
+
+/// Palabras en minúsculas separadas y rodeadas por un espacio, para buscar
+/// términos completos («live» no debe coincidir con «Alive»).
+fn padded_words(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push(' ');
+    let mut last_space = true;
+    for ch in value.chars() {
+        if ch.is_alphanumeric() {
+            out.extend(ch.to_lowercase());
+            last_space = false;
+        } else if !last_space {
+            out.push(' ');
+            last_space = true;
+        }
+    }
+    if !last_space {
+        out.push(' ');
+    }
+    out
+}
+
 pub fn score_candidate(
     candidate: &MatchCandidate,
     title: &str,
     artist: &str,
     duration: f64,
 ) -> i64 {
-    let q_title = normalize(title);
+    let q_title = normalize(core_title(title));
     let q_artist = normalize(artist);
+    let q_main = normalize(primary_artist(artist));
     let c_title = normalize(&candidate.title);
     let c_channel = normalize(&candidate.channel);
     let mut score: i64 = 0;
@@ -370,6 +457,8 @@ pub fn score_candidate(
             score += 42;
         } else if c_title.contains(&q_title) {
             score += 32;
+        } else if c_title.len() >= 4 && q_title.contains(&c_title) {
+            score += 24;
         } else {
             let wanted: Vec<&str> = q_title.split_whitespace().collect();
             let found = wanted
@@ -382,11 +471,14 @@ pub fn score_candidate(
         }
     }
     if !q_artist.is_empty() {
-        if !c_channel.is_empty() && (c_channel.contains(&q_artist) || q_artist.contains(&c_channel))
-        {
+        let channel_matches = !c_channel.is_empty()
+            && (c_channel.contains(&q_artist)
+                || q_artist.contains(&c_channel)
+                || (!q_main.is_empty() && c_channel.contains(&q_main)));
+        if channel_matches {
             score += 26;
         }
-        if c_title.contains(&q_artist) {
+        if c_title.contains(&q_artist) || (!q_main.is_empty() && c_title.contains(&q_main)) {
             score += 10;
         }
     }
@@ -407,8 +499,8 @@ pub fn score_candidate(
             -16
         };
     }
-    let query_hint = format!("{} {}", title, artist).to_lowercase();
-    let c_lower = candidate.title.to_lowercase();
+    let wanted_words = padded_words(&format!("{title} {artist}"));
+    let found_words = padded_words(&candidate.title);
     for bad in [
         "cover",
         "karaoke",
@@ -421,14 +513,19 @@ pub fn score_candidate(
         "8d audio",
         "bass boosted",
     ] {
-        if c_lower.contains(bad) && !query_hint.contains(bad) {
+        let needle = format!(" {bad} ");
+        if found_words.contains(&needle) && !wanted_words.contains(&needle) {
             score -= 22;
         }
     }
-    for bad in ["live", "remix", "acoustic", "version"] {
-        if c_lower.contains(bad) && !query_hint.contains(bad) {
+    for bad in ["live", "remix", "acoustic", "version", "en vivo", "directo"] {
+        let needle = format!(" {bad} ");
+        if found_words.contains(&needle) && !wanted_words.contains(&needle) {
             score -= 9;
         }
+    }
+    if has_unexpected_edition(&candidate.title, &wanted_words) {
+        score -= 14;
     }
     if candidate.url.contains("list=") {
         score -= 4;
@@ -436,11 +533,149 @@ pub fn score_candidate(
     score
 }
 
+/// Indica si el título trae entre paréntesis algo que no se pidió y que no es
+/// relleno habitual («Official Video», «Remastered 2011»): suele delatar otra
+/// grabación, como «(From the BBC)» o «(Made Famous by…)».
+fn has_unexpected_edition(candidate_title: &str, wanted_words: &str) -> bool {
+    const FILLER: [&str; 40] = [
+        "official",
+        "oficial",
+        "video",
+        "vídeo",
+        "videoclip",
+        "audio",
+        "lyric",
+        "lyrics",
+        "letra",
+        "remaster",
+        "remastered",
+        "remasterizado",
+        "hd",
+        "hq",
+        "4k",
+        "visualizer",
+        "music",
+        "clip",
+        "feat",
+        "ft",
+        "with",
+        "con",
+        "explicit",
+        "clean",
+        "the",
+        "a",
+        "de",
+        "y",
+        "and",
+        "original",
+        "album",
+        "single",
+        "mv",
+        "stereo",
+        "mono",
+        "version",
+        "versión",
+        "prod",
+        "by",
+        "from",
+    ];
+    let mut inside = String::new();
+    let mut depth = 0u32;
+    for ch in candidate_title.chars() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => {
+                depth = depth.saturating_sub(1);
+                inside.push(' ');
+            }
+            _ if depth > 0 => inside.push(ch),
+            _ => {}
+        }
+    }
+    let words = padded_words(&inside);
+    let mut unexpected = words.split_whitespace().filter(|word| {
+        !FILLER.contains(word)
+            && !word.chars().all(|ch| ch.is_ascii_digit())
+            && !wanted_words.contains(&format!(" {word} "))
+    });
+    unexpected.next().is_some()
+}
+
+/// Puntuación mínima para dar una coincidencia por buena sin preguntar.
+pub const CONFIDENT_SCORE: i64 = 40;
+
+/// Busca una canción por sus metadatos y devuelve candidatos ordenados.
+///
+/// Se consultan a la vez el catálogo de canciones de YouTube Music (la pista
+/// de audio oficial, pero sin canal ni duración que comprobar) y la búsqueda
+/// general de YouTube (videoclips, pero con canal y duración). Un vídeo cuya
+/// duración y canal cuadran gana; si no, se prefiere la canción de YouTube Music.
+pub fn resolve_candidates(
+    paths: &Paths,
+    title: &str,
+    artist: &str,
+    duration: f64,
+) -> Result<Vec<MatchCandidate>, String> {
+    let title = title.trim();
+    let main = primary_artist(artist);
+    let query = match (main.is_empty(), title.is_empty()) {
+        (true, true) => return Ok(Vec::new()),
+        (true, false) => title.to_string(),
+        (false, true) => main.to_string(),
+        (false, false) => format!("{main} {title}"),
+    };
+
+    let (music, general) = std::thread::scope(|scope| {
+        let music = scope.spawn(|| search_music(paths, &query, 4));
+        let general = search_with_limit(paths, &query, 5);
+        let music = music
+            .join()
+            .unwrap_or_else(|_| Err("La búsqueda en YouTube Music se interrumpió.".into()));
+        (music, general)
+    });
+
+    let mut out: Vec<MatchCandidate> = Vec::new();
+    if let Ok(found) = &general {
+        for candidate in found {
+            let mut candidate = candidate.clone();
+            candidate.score = score_candidate(&candidate, title, artist, duration);
+            out.push(candidate);
+        }
+    }
+    if let Ok(found) = music {
+        for (index, mut candidate) in found.into_iter().enumerate() {
+            let base = score_candidate(&candidate, title, "", 0.0);
+            // Solo se premia cuando el título cuadra: no hay más datos que verificar.
+            candidate.score = if base >= 24 {
+                base + 34 - (index as i64 * 3)
+            } else {
+                base
+            };
+            candidate.channel = "YouTube Music".into();
+            if let Some(existing) = out
+                .iter_mut()
+                .find(|other| other.video_id == candidate.video_id)
+            {
+                // Ya está puntuado con canal y duración reales: eso manda.
+                // Estar además en el catálogo de canciones solo suma un poco.
+                existing.score += 6;
+            } else {
+                out.push(candidate);
+            }
+        }
+    } else if let Err(error) = general {
+        return Err(error);
+    }
+    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.truncate(6);
+    Ok(out)
+}
+
 fn normalize(value: &str) -> String {
     let mut out = String::new();
     let mut depth = 0i32;
     let mut last_space = true;
-    for ch in value.chars() {
+    for ch in value.chars().flat_map(char::to_lowercase) {
         match ch {
             '(' | '[' => {
                 depth += 1;
@@ -588,6 +823,11 @@ pub fn fetch_flat_playlist(url: &str) -> Result<(String, Vec<ImportedTrack>), St
         } else {
             (title, artist)
         };
+        let cover = if is_video_id(&video_id) {
+            thumbnail_url(&video_id)
+        } else {
+            String::new()
+        };
         tracks.push(ImportedTrack {
             id: String::new(),
             title,
@@ -595,6 +835,7 @@ pub fn fetch_flat_playlist(url: &str) -> Result<(String, Vec<ImportedTrack>), St
             album: String::new(),
             duration,
             uri,
+            cover,
         });
     }
     if tracks.is_empty() {
@@ -807,38 +1048,141 @@ pub struct PreparedStream {
     pub cover: String,
 }
 
+/// Enlaces que solo sirven como metadatos: Spotify protege su audio con DRM,
+/// así que la canción hay que buscarla por título y artista.
+pub fn is_metadata_only(uri: &str) -> bool {
+    let lower = uri.trim().to_ascii_lowercase();
+    lower.starts_with("spotify:")
+        || lower.contains("open.spotify.com")
+        || lower.contains("spotify.link")
+}
+
 pub fn prepare_playback(
     paths: &Paths,
     hint: &str,
     title: &str,
     artist: &str,
+    duration: f64,
 ) -> Result<PreparedStream, String> {
+    let hint = hint.trim();
     let url = if let Some(url) = canonical_watch_url(hint) {
         url
-    } else if hint.starts_with("http://") || hint.starts_with("https://") {
-        hint.trim().to_string()
+    } else if (hint.starts_with("http://") || hint.starts_with("https://"))
+        && !is_metadata_only(hint)
+    {
+        hint.to_string()
     } else {
-        let query = if artist.trim().is_empty() {
-            title.trim().to_string()
-        } else if title.trim().is_empty() {
-            artist.trim().to_string()
-        } else {
-            format!("{} {}", artist.trim(), title.trim())
-        };
-        if query.is_empty() {
-            return Err("No hay título ni enlace para reproducir esta pista.".into());
-        }
-        let mut found = search(paths, &query)?;
-        for candidate in &mut found {
-            candidate.score = score_candidate(candidate, title, artist, 0.0);
-        }
-        found.sort_by(|a, b| b.score.cmp(&a.score));
-        found
-            .first()
-            .map(|candidate| candidate.url.clone())
-            .ok_or_else(|| "No encontré esa canción para reproducirla.".to_string())?
+        resolve_url(paths, title, artist, duration)?
     };
     fetch_audio(paths, &url)
+}
+
+/// Resuelve una canción a su enlace de YouTube, recordando el resultado para
+/// no repetir la búsqueda la próxima vez.
+fn resolve_url(paths: &Paths, title: &str, artist: &str, duration: f64) -> Result<String, String> {
+    // La interfaz rellena así las pistas sin artista; no debe entrar en la búsqueda.
+    let artist = if artist.trim() == "Artista desconocido" {
+        ""
+    } else {
+        artist
+    };
+    if title.trim().is_empty() && artist.trim().is_empty() {
+        return Err("No hay título ni enlace para reproducir esta pista.".into());
+    }
+    if let Some(id) = cached_match(paths, title, artist) {
+        return Ok(format!("https://www.youtube.com/watch?v={id}"));
+    }
+    let found = resolve_candidates(paths, title, artist, duration)?;
+    let best = found
+        .first()
+        .ok_or_else(|| "No encontré esa canción para reproducirla.".to_string())?;
+    if best.score >= CONFIDENT_SCORE && !best.video_id.is_empty() {
+        remember_match(paths, title, artist, &best.video_id);
+    }
+    Ok(best.url.clone())
+}
+
+// ---------- caché de coincidencias ----------
+
+type MatchMap = std::collections::HashMap<String, String>;
+
+static MATCHES: parking_lot::Mutex<Option<MatchMap>> = parking_lot::Mutex::new(None);
+const MAX_MATCHES: usize = 20_000;
+
+fn matches_file(paths: &Paths) -> PathBuf {
+    paths.cache_dir.join("matches.json")
+}
+
+fn match_key(title: &str, artist: &str) -> String {
+    format!(
+        "{}|{}",
+        normalize(primary_artist(artist)),
+        normalize(core_title(title))
+    )
+}
+
+fn with_matches<T>(paths: &Paths, action: impl FnOnce(&mut MatchMap) -> T) -> T {
+    let mut guard = MATCHES.lock();
+    let map = guard.get_or_insert_with(|| {
+        fs::read(matches_file(paths))
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<MatchMap>(&raw).ok())
+            .unwrap_or_default()
+    });
+    action(map)
+}
+
+pub fn cached_match(paths: &Paths, title: &str, artist: &str) -> Option<String> {
+    let key = match_key(title, artist);
+    if key.len() < 3 {
+        return None;
+    }
+    with_matches(paths, |map| map.get(&key).cloned()).filter(|id| is_video_id(id))
+}
+
+pub fn remember_match(paths: &Paths, title: &str, artist: &str, video_id: &str) {
+    let key = match_key(title, artist);
+    if key.len() < 3 || !is_video_id(video_id) {
+        return;
+    }
+    with_matches(paths, |map| {
+        if map.get(&key).map(String::as_str) == Some(video_id) {
+            return;
+        }
+        if map.len() >= MAX_MATCHES {
+            map.clear();
+        }
+        map.insert(key, video_id.to_string());
+        if let Ok(raw) = serde_json::to_vec(map) {
+            let file = matches_file(paths);
+            let tmp = file.with_extension("json.tmp");
+            if fs::write(&tmp, raw).is_ok() {
+                let _ = fs::rename(&tmp, &file);
+            }
+        }
+    });
+}
+
+/// Olvida las coincidencias en memoria (restablecimiento de fábrica).
+pub fn forget_matches() {
+    *MATCHES.lock() = None;
+}
+
+// ---------- descarga a la caché de streaming ----------
+
+type DownloadLocks = std::collections::HashMap<String, std::sync::Arc<parking_lot::Mutex<()>>>;
+
+/// Un cerrojo por vídeo: la precarga y el «play» pueden pedir la misma pista a
+/// la vez y dos yt-dlp no deben escribir el mismo archivo.
+static DOWNLOADS: parking_lot::Mutex<Option<DownloadLocks>> = parking_lot::Mutex::new(None);
+
+fn download_lock(id: &str) -> std::sync::Arc<parking_lot::Mutex<()>> {
+    DOWNLOADS
+        .lock()
+        .get_or_insert_with(Default::default)
+        .entry(id.to_string())
+        .or_default()
+        .clone()
 }
 
 fn fetch_audio(paths: &Paths, url: &str) -> Result<PreparedStream, String> {
@@ -848,7 +1192,13 @@ fn fetch_audio(paths: &Paths, url: &str) -> Result<PreparedStream, String> {
     } else {
         String::new()
     };
+    let lock = download_lock(&id);
+    let _downloading = lock.lock();
     if let Some(existing) = find_cached(paths, &id) {
+        // Marca el archivo como recién usado para que la poda respete lo que se escucha.
+        if let Ok(file) = fs::File::options().append(true).open(&existing) {
+            let _ = file.set_modified(std::time::SystemTime::now());
+        }
         return Ok(PreparedStream {
             path: existing,
             duration: 0.0,
@@ -960,6 +1310,13 @@ fn prune_stream_cache(paths: &Paths) {
         if !meta.is_file() {
             continue;
         }
+        let partial = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| matches!(ext, "part" | "ytdl"));
+        if partial {
+            continue;
+        }
         let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
         files.push((modified, path, meta.len()));
     }
@@ -1003,6 +1360,85 @@ mod tests {
         assert_eq!(
             canonical_watch_url("dQw4w9WgXcQ").as_deref(),
             Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        );
+    }
+
+    fn candidate(title: &str, channel: &str, duration: f64) -> MatchCandidate {
+        MatchCandidate {
+            url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ".into(),
+            title: title.into(),
+            channel: channel.into(),
+            duration,
+            score: 0,
+            video_id: "dQw4w9WgXcQ".into(),
+            thumbnail: String::new(),
+        }
+    }
+
+    #[test]
+    fn spotify_links_are_metadata_not_audio() {
+        assert!(is_metadata_only(
+            "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh"
+        ));
+        assert!(is_metadata_only("spotify:track:4iV5W9uYEdYUVa79Axb7Rh"));
+        assert!(!is_metadata_only(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        ));
+        assert!(!is_metadata_only("https://example.test/bajamar.mp3"));
+    }
+
+    #[test]
+    fn spotify_edition_suffix_does_not_break_title_match() {
+        let official = candidate("Heroes (2017 Remaster)", "David Bowie", 371.0);
+        let score = score_candidate(&official, "Heroes - 2017 Remaster", "David Bowie", 371.0);
+        assert!(score >= 80, "puntuación inesperada: {score}");
+    }
+
+    #[test]
+    fn penalties_match_whole_words_only() {
+        let alive = candidate("Alive", "Pearl Jam", 341.0);
+        let live = candidate("Alive (Live at Wembley)", "Pearl Jam", 341.0);
+        let studio = score_candidate(&alive, "Alive", "Pearl Jam", 341.0);
+        let concert = score_candidate(&live, "Alive", "Pearl Jam", 341.0);
+        assert!(studio > concert);
+        assert_eq!(studio, 42 + 26 + 20);
+    }
+
+    #[test]
+    fn verified_video_beats_wrong_length_video() {
+        let right = candidate("ROSALÍA - MALAMENTE", "ROSALÍA", 150.0);
+        let skit = candidate("ROSALÍA - MALAMENTE (Cap.1: Augurio)", "ROSALÍA", 169.0);
+        let a = score_candidate(&right, "MALAMENTE - Cap.1: Augurio", "ROSALÍA", 150.0);
+        let b = score_candidate(&skit, "MALAMENTE - Cap.1: Augurio", "ROSALÍA", 150.0);
+        assert!(a > b);
+    }
+
+    #[test]
+    fn collaborations_match_the_first_artist_channel() {
+        assert_eq!(primary_artist("Lúa, Berta; Otro"), "Lúa");
+        let song = candidate("Sal y miel", "Lúa", 0.0);
+        assert!(score_candidate(&song, "Sal y miel", "Lúa, Berta", 0.0) >= 42 + 26);
+    }
+
+    #[test]
+    fn unrequested_recordings_lose_to_the_plain_song() {
+        let bbc = candidate("Pearl Jam - Alive (From the BBC)", "Pearl Jam", 339.0);
+        let video = candidate("Pearl Jam - Alive (Official Video)", "Pearl Jam", 339.0);
+        let a = score_candidate(&bbc, "Alive", "Pearl Jam", 341.0);
+        let b = score_candidate(&video, "Alive", "Pearl Jam", 341.0);
+        assert_eq!(b - a, 14);
+        let remaster = candidate("Bohemian Rhapsody (Remastered 2011)", "Queen", 355.0);
+        assert!(!has_unexpected_edition(
+            &remaster.title,
+            &padded_words("Bohemian Rhapsody - Remastered 2011 Queen")
+        ));
+    }
+
+    #[test]
+    fn match_keys_ignore_edition_and_extra_artists() {
+        assert_eq!(
+            match_key("Heroes - 2017 Remaster", "David Bowie, Queen"),
+            match_key("Heroes", "David Bowie")
         );
     }
 }

@@ -28,6 +28,20 @@ const SCOPES: &str =
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(240);
 const PAGE_SIZE: u32 = 50;
 
+/// Client ID de la app de Spotify de Davusic, incrustado al compilar (ver
+/// `build.rs`). Con él basta pulsar «Conectar con Spotify», como en Exportify.
+/// Vacío si el binario se compiló sin uno: entonces cada persona usa el suyo.
+const BUILTIN_CLIENT_ID: &str = env!("DAVUSIC_BUILTIN_SPOTIFY_CLIENT_ID");
+
+/// El Client ID propio tiene prioridad sobre el incluido.
+fn effective_client_id(store: &Store) -> &str {
+    if store.client_id.is_empty() {
+        BUILTIN_CLIENT_ID
+    } else {
+        &store.client_id
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Store {
     #[serde(default)]
@@ -96,14 +110,16 @@ pub fn is_connected(paths: &Paths) -> bool {
 
 pub fn save_client_id(paths: &Paths, raw: &str) -> Result<SpotifyStatus, String> {
     let client_id = raw.trim();
-    if client_id.is_empty() {
+    if client_id.is_empty() && BUILTIN_CLIENT_ID.is_empty() {
         return Err("Pega el Client ID de tu app de Spotify.".into());
     }
-    if client_id.len() < 8
-        || client_id.len() > 256
-        || !client_id
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    // Vacío = volver al Client ID incluido en Davusic.
+    if !client_id.is_empty()
+        && (client_id.len() < 8
+            || client_id.len() > 256
+            || !client_id
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
     {
         return Err(
             "Ese Client ID no parece válido. Copia solo el Client ID de Spotify Developer.".into(),
@@ -138,7 +154,9 @@ fn clear_session(store: &mut Store) {
 
 fn status_from_store(store: &Store) -> SpotifyStatus {
     SpotifyStatus {
-        configured: !store.client_id.is_empty(),
+        configured: !effective_client_id(store).is_empty(),
+        builtin: store.client_id.is_empty() && !BUILTIN_CLIENT_ID.is_empty(),
+        builtin_available: !BUILTIN_CLIENT_ID.is_empty(),
         connected: !store.refresh_token.is_empty(),
         client_id: store.client_id.clone(),
         display_name: store.display_name.clone(),
@@ -192,7 +210,8 @@ fn write_store(path: &Path, store: &Store) -> Result<(), String> {
 
 pub fn login(paths: &Paths, cancel: &AtomicBool) -> Result<SpotifyStatus, String> {
     let mut store = read_store(&paths.spotify_file);
-    if store.client_id.is_empty() {
+    let client_id = effective_client_id(&store).to_string();
+    if client_id.is_empty() {
         return Err("Primero configura el Client ID de tu app de Spotify.".into());
     }
     cancel.store(false, Ordering::SeqCst);
@@ -214,7 +233,7 @@ pub fn login(paths: &Paths, cancel: &AtomicBool) -> Result<SpotifyStatus, String
     let state = random_token(32)?;
     let authorize_url = format!(
         "{AUTHORIZE_URL}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge_method=S256&code_challenge={}",
-        url_encode(&store.client_id),
+        url_encode(&client_id),
         url_encode(REDIRECT_URI),
         url_encode(SCOPES),
         url_encode(&state),
@@ -226,7 +245,7 @@ pub fn login(paths: &Paths, cancel: &AtomicBool) -> Result<SpotifyStatus, String
 
     let result: Result<SpotifyStatus, String> = (|| {
         let client = http_client()?;
-        let token = exchange_code(&client, &store.client_id, &callback.code, &verifier)?;
+        let token = exchange_code(&client, &client_id, &callback.code, &verifier)?;
         let profile = fetch_profile(&client, &token.access_token)?;
         store.access_token = token.access_token;
         let refresh_token = token
@@ -499,6 +518,22 @@ pub fn playlists(paths: &Paths, offset: u32) -> Result<SpotifyPlaylistPage, Stri
     })
 }
 
+const METADATA_NOTE: &str =
+    "Davusic solo ha leído metadatos de Spotify. Al pulsar play, las canciones se streamean en este equipo.";
+
+/// Una playlist ya leída, todavía sin normalizar.
+struct ReadPlaylist {
+    playlist: ImportedPlaylist,
+    cover: String,
+    warnings: Vec<String>,
+}
+
+fn valid_playlist_id(playlist_id: &str) -> bool {
+    !playlist_id.is_empty()
+        && playlist_id.len() <= 100
+        && playlist_id.chars().all(|ch| ch.is_ascii_alphanumeric())
+}
+
 pub fn import_playlist<F>(
     paths: &Paths,
     playlist_id: &str,
@@ -507,74 +542,147 @@ pub fn import_playlist<F>(
 where
     F: FnMut(u32, u32),
 {
-    if playlist_id.is_empty()
-        || playlist_id.len() > 100
-        || !playlist_id.chars().all(|ch| ch.is_ascii_alphanumeric())
-    {
+    if !valid_playlist_id(playlist_id) {
         return Err("El identificador de la playlist de Spotify no es válido.".into());
     }
     let mut store = connected_store(paths)?;
     let client = http_client()?;
-    let detail = api_get(
-        paths,
-        &client,
-        &mut store,
-        &format!("/playlists/{playlist_id}"),
-    )?;
-    let name = detail
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or("Playlist de Spotify")
-        .to_string();
-    let description = detail
-        .get("description")
-        .and_then(Value::as_str)
-        .unwrap_or("Importada desde tu cuenta de Spotify.")
-        .to_string();
-    let total = detail
-        .pointer("/tracks/total")
-        .or_else(|| detail.pointer("/items/total"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-        .min(u32::MAX as u64) as u32;
+    let read = read_playlist(paths, &client, &mut store, playlist_id, None, &mut progress)?;
+    let mut warnings = read.warnings;
+    warnings.push(METADATA_NOTE.into());
+    let bundle = ImportBundle {
+        playlists: vec![read.playlist],
+        warnings,
+        origin: "Spotify · Mi cuenta".into(),
+        cover: read.cover,
+    };
+    crate::playlist_import::finish(bundle)
+}
 
-    let (tracks, skipped) = playlist_tracks(
-        paths,
-        &client,
-        &mut store,
-        playlist_id,
-        total,
-        &mut progress,
-    )?;
+/// Lee una playlist con la Web API y, si Spotify no deja (listas seguidas,
+/// editoriales o «Made for You»), recurre a su página pública.
+fn read_playlist<F>(
+    paths: &Paths,
+    client: &reqwest::blocking::Client,
+    store: &mut Store,
+    playlist_id: &str,
+    known: Option<&SpotifyPlaylistSummary>,
+    progress: &mut F,
+) -> Result<ReadPlaylist, String>
+where
+    F: FnMut(u32, u32),
+{
+    let api_error = match read_playlist_api(paths, client, store, playlist_id, known, progress) {
+        Ok(read) => return Ok(read),
+        Err(error) => error,
+    };
+    let Ok(mut playlist) = crate::playlist_import::spotify_public_playlist(playlist_id) else {
+        return Err(api_error);
+    };
+    let expected = known.map(|summary| summary.track_count).unwrap_or(0) as usize;
+    let visible = playlist.tracks.len();
+    if let Some(summary) = known {
+        if !summary.name.trim().is_empty() {
+            playlist.name = summary.name.clone();
+        }
+    }
+    let scope = if expected > visible {
+        format!("las {visible} primeras pistas de {expected}")
+    } else {
+        format!("{visible} pistas")
+    };
+    let warning = format!(
+        "«{}»: Spotify no deja leerla con tu cuenta porque no es tuya ni colaborativa. \
+         Se han traído {scope} desde su página pública; para tenerla entera, expórtala con Exportify.",
+        playlist.name
+    );
+    Ok(ReadPlaylist {
+        playlist,
+        cover: known
+            .map(|summary| summary.image.clone())
+            .unwrap_or_default(),
+        warnings: vec![warning],
+    })
+}
+
+fn read_playlist_api<F>(
+    paths: &Paths,
+    client: &reqwest::blocking::Client,
+    store: &mut Store,
+    playlist_id: &str,
+    known: Option<&SpotifyPlaylistSummary>,
+    progress: &mut F,
+) -> Result<ReadPlaylist, String>
+where
+    F: FnMut(u32, u32),
+{
+    // El listado de la cuenta ya trae nombre, descripción y total: con él se
+    // ahorra una petición por playlist al importar la biblioteca entera.
+    let (name, description, total, cover) = match known {
+        Some(summary) => (
+            summary.name.clone(),
+            summary.description.clone(),
+            summary.track_count,
+            summary.image.clone(),
+        ),
+        None => {
+            let detail = api_get(paths, client, store, &format!("/playlists/{playlist_id}"))?;
+            let text = |key: &str| {
+                detail
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let total = detail
+                .pointer("/tracks/total")
+                .or_else(|| detail.pointer("/items/total"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32;
+            let cover = detail
+                .pointer("/images/0/url")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            (text("name"), text("description"), total, cover)
+        }
+    };
+    let name = if name.trim().is_empty() {
+        "Playlist de Spotify".to_string()
+    } else {
+        name
+    };
+    let description = if description.trim().is_empty() {
+        "Importada desde tu cuenta de Spotify.".to_string()
+    } else {
+        format!("{} · Cuenta de Spotify.", description.trim())
+    };
+
+    let (tracks, skipped) = playlist_tracks(paths, client, store, playlist_id, total, progress)?;
     if tracks.is_empty() {
         return Err(
             "Spotify no devolvió canciones para esta playlist. Puede ser una lista editorial vacía o retirada."
                 .into(),
         );
     }
-
     let mut warnings = Vec::new();
     if skipped > 0 {
         warnings.push(format!(
-            "Se omitieron {skipped} elementos que no eran canciones (episodios, pistas retiradas o no disponibles)."
+            "«{name}»: se omitieron {skipped} elementos que no eran canciones (episodios, pistas retiradas o no disponibles)."
         ));
     }
-    warnings.push(
-        "Davusic solo ha leído metadatos de Spotify. Al pulsar play, las canciones se streamean en este equipo."
-            .into(),
-    );
-    let bundle = ImportBundle {
-        playlists: vec![ImportedPlaylist {
+    Ok(ReadPlaylist {
+        playlist: ImportedPlaylist {
             id: String::new(),
             name,
-            description: format!("{description} · Cuenta de Spotify."),
+            description,
             source: "spotify".into(),
             tracks,
-        }],
+        },
+        cover,
         warnings,
-        origin: "Spotify · Mi cuenta".into(),
-    };
-    crate::playlist_import::finish(bundle)
+    })
 }
 
 pub fn import_saved<F>(paths: &Paths, mut progress: F) -> Result<ImportBundle, String>
@@ -620,9 +728,7 @@ where
                 .into(),
         );
     }
-    let mut warnings = vec![
-        "Davusic solo ha leído metadatos de Spotify. Al pulsar play, las canciones se streamean en este equipo.".into(),
-    ];
+    let mut warnings = vec![METADATA_NOTE.to_string()];
     if skipped > 0 {
         warnings.push(format!(
             "Se omitieron {skipped} elementos que no eran canciones."
@@ -638,6 +744,7 @@ where
         }],
         warnings,
         origin: "Spotify · Me gusta".into(),
+        cover: String::new(),
     };
     crate::playlist_import::finish(bundle)
 }
@@ -648,9 +755,13 @@ pub fn import_url(paths: &Paths, url: &str) -> Result<ImportBundle, String> {
     import_playlist(paths, &id, |_, _| {})
 }
 
+/// Playlists que se leen a la vez al importar la biblioteca entera. Tres es
+/// rápido sin acercarse al límite de peticiones de Spotify.
+const LIBRARY_WORKERS: usize = 3;
+
 pub fn import_library<F>(paths: &Paths, mut progress: F) -> Result<ImportBundle, String>
 where
-    F: FnMut(u32, u32, &str),
+    F: FnMut(u32, u32, &str) + Send,
 {
     let mut imported = Vec::new();
     let mut warnings = Vec::new();
@@ -669,41 +780,81 @@ where
         }
     }
 
-    progress(0, listed.len() as u32 + 1, "Me gusta");
-    match import_saved(paths, |done, total| {
-        progress(done, total, "Me gusta");
-    }) {
+    let steps = listed.len() as u32 + 1;
+    progress(0, steps, "Me gusta");
+    match import_saved(paths, |_, _| {}) {
         Ok(mut saved) => imported.append(&mut saved.playlists),
         Err(error) => warnings.push(format!("Me gusta: {error}")),
     }
+    progress(1, steps, "Me gusta");
 
-    let total = listed.len() as u32;
-    for (index, summary) in listed.into_iter().enumerate() {
-        let label = if summary.name.is_empty() {
-            "Playlist de Spotify"
-        } else {
-            summary.name.as_str()
-        };
-        progress(index as u32 + 1, total.saturating_add(1), label);
-        match import_playlist(paths, &summary.id, |_, _| {}) {
-            Ok(mut bundle) => imported.append(&mut bundle.playlists),
-            Err(error) => warnings.push(format!("{}: {error}", summary.name)),
+    // Renueva el token una sola vez antes de repartir el trabajo.
+    let client = http_client()?;
+    let mut store = connected_store(paths)?;
+    ensure_access_token(paths, &client, &mut store)?;
+
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let finished = std::sync::atomic::AtomicU32::new(1);
+    let results: parking_lot::Mutex<Vec<Option<Result<ReadPlaylist, String>>>> =
+        parking_lot::Mutex::new((0..listed.len()).map(|_| None).collect());
+    let progress = parking_lot::Mutex::new(&mut progress);
+    std::thread::scope(|scope| {
+        for _ in 0..LIBRARY_WORKERS.min(listed.len()) {
+            scope.spawn(|| {
+                let mut store = store.clone();
+                loop {
+                    let index = next.fetch_add(1, Ordering::SeqCst);
+                    let Some(summary) = listed.get(index) else {
+                        break;
+                    };
+                    let result = read_playlist(
+                        paths,
+                        &client,
+                        &mut store,
+                        &summary.id,
+                        Some(summary),
+                        &mut |_, _| {},
+                    );
+                    results.lock()[index] = Some(result);
+                    let done = finished.fetch_add(1, Ordering::SeqCst) + 1;
+                    let label = if summary.name.is_empty() {
+                        "Playlist de Spotify"
+                    } else {
+                        summary.name.as_str()
+                    };
+                    (*progress.lock())(done, steps, label);
+                }
+            });
+        }
+    });
+
+    for (summary, result) in listed.iter().zip(results.into_inner()) {
+        match result {
+            Some(Ok(mut read)) => {
+                imported.push(read.playlist);
+                warnings.append(&mut read.warnings);
+            }
+            Some(Err(error)) => warnings.push(format!("{}: {error}", summary.name)),
+            None => warnings.push(format!("{}: no se llegó a leer.", summary.name)),
         }
     }
 
     if imported.is_empty() {
         return Err("No se pudieron leer playlists ni Me gusta de esta cuenta de Spotify.".into());
     }
-    warnings.push(
-        "Davusic ha leído las playlists como lo haría Exportify: metadatos oficiales, sin descargar audio.".into(),
-    );
+    warnings.push(METADATA_NOTE.into());
     let bundle = ImportBundle {
         playlists: imported,
         warnings,
         origin: "Spotify · Exportar todas".into(),
+        cover: String::new(),
     };
     crate::playlist_import::finish(bundle)
 }
+
+/// Spotify está sustituyendo `/playlists/{id}/tracks` por `/items`. Se recuerda
+/// cuál respondió para no gastar una petición fallida en cada playlist.
+static PREFER_ITEMS_ENDPOINT: AtomicBool = AtomicBool::new(false);
 
 fn playlist_tracks<F>(
     paths: &Paths,
@@ -720,23 +871,34 @@ where
     let mut skipped = 0usize;
     let mut offset = 0u32;
     let mut observed_total = total_hint;
-    // /items es el endpoint actual, pero Spotify lo restringe a playlists
-    // propias o colaborativas. /tracks sigue siendo necesario para listas
-    // seguidas; el máximo documentado por página es 50. Si /tracks falla en
-    // la primera página, se reintenta el listado completo con /items.
+    // /tracks es el endpoint clásico y /items el nuevo; según la antigüedad de
+    // la app de Spotify solo responde uno. Si el preferido falla en la primera
+    // página se prueba el otro, y el máximo documentado por página es 50.
     const TRACK_PAGE: u32 = 50;
-    let mut endpoint = "tracks";
+    let preferred_items = PREFER_ITEMS_ENDPOINT.load(Ordering::Relaxed);
+    let mut endpoint = if preferred_items { "items" } else { "tracks" };
+    let mut first_error: Option<String> = None;
     loop {
         let path = format!(
             "/playlists/{playlist_id}/{endpoint}?limit={TRACK_PAGE}&offset={offset}&additional_types=track"
         );
         let page = match api_get(paths, client, store, &path) {
-            Ok(page) => page,
-            Err(_error) if offset == 0 && endpoint == "tracks" => {
-                endpoint = "items";
+            Ok(page) => {
+                if offset == 0 && first_error.is_some() {
+                    PREFER_ITEMS_ENDPOINT.store(endpoint == "items", Ordering::Relaxed);
+                }
+                page
+            }
+            Err(error) if offset == 0 && first_error.is_none() => {
+                first_error = Some(error);
+                endpoint = if endpoint == "tracks" {
+                    "items"
+                } else {
+                    "tracks"
+                };
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(first_error.unwrap_or(error)),
         };
         if let Some(page_total) = page.get("total").and_then(Value::as_u64) {
             observed_total = page_total.min(u32::MAX as u64) as u32;
@@ -773,7 +935,7 @@ fn connected_store(paths: &Paths) -> Result<Store, String> {
     if store.refresh_token.is_empty() {
         return Err("Conecta tu cuenta de Spotify desde Ajustes o desde el importador.".into());
     }
-    if store.client_id.is_empty() {
+    if effective_client_id(&store).is_empty() {
         return Err("Falta el Client ID de Spotify. Vuelve a configurarlo en Ajustes.".into());
     }
     Ok(store)
@@ -824,6 +986,14 @@ fn imported_track_from_container(container: &Value) -> Option<ImportedTrack> {
         .or_else(|| track.get("uri").and_then(Value::as_str))
         .unwrap_or("")
         .to_string();
+    // Las imágenes vienen de mayor a menor (640, 300, 64 px): la mediana basta.
+    let cover = track
+        .pointer("/album/images/1/url")
+        .or_else(|| track.pointer("/album/images/0/url"))
+        .and_then(Value::as_str)
+        .filter(|url| url.starts_with("https://"))
+        .unwrap_or("")
+        .to_string();
     Some(ImportedTrack {
         id: String::new(),
         title: title.to_string(),
@@ -831,6 +1001,7 @@ fn imported_track_from_container(container: &Value) -> Option<ImportedTrack> {
         album,
         duration,
         uri,
+        cover,
     })
 }
 
@@ -913,12 +1084,27 @@ fn ensure_access_token(
     if store.refresh_token.is_empty() {
         return Err("No hay una sesión de Spotify activa. Conecta tu cuenta de nuevo.".into());
     }
+    // Spotify rota el token de actualización: dos hilos renovando a la vez se
+    // invalidarían entre sí. Si otro ya renovó mientras esperábamos, se reutiliza.
+    static REFRESHING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    let _refreshing = REFRESHING.lock();
+    let disk = read_store(&paths.spotify_file);
+    if disk.client_id == store.client_id && !disk.refresh_token.is_empty() {
+        if !disk.access_token.is_empty()
+            && disk.access_token != store.access_token
+            && disk.expires_at > now + 30
+        {
+            *store = disk;
+            return Ok(store.access_token.clone());
+        }
+        store.refresh_token = disk.refresh_token;
+    }
     let response = client
         .post(TOKEN_URL)
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", &store.refresh_token),
-            ("client_id", &store.client_id),
+            ("client_id", &effective_client_id(store).to_string()),
         ])
         .send()
         .map_err(|error| format!("No se pudo renovar la sesión de Spotify: {error}"))?;
@@ -1012,7 +1198,7 @@ fn base64_url(data: &[u8]) -> String {
     out
 }
 
-fn url_encode(value: &str) -> String {
+pub(crate) fn url_encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
@@ -1161,10 +1347,29 @@ mod tests {
             ("Bajamar", "Lúa")
         );
         assert_eq!(first.duration, 88.0);
+        assert_eq!(first.cover, "");
         assert_eq!(
             (second.title.as_str(), second.artist.as_str()),
             ("Cromo", "Vera Nox")
         );
+    }
+
+    #[test]
+    fn album_art_prefers_the_medium_image() {
+        let item = serde_json::json!({
+            "track": {
+                "type": "track",
+                "name": "Bajamar",
+                "artists": [{"name": "Lúa"}],
+                "album": {"name": "Mareas", "images": [
+                    {"url": "https://i.scdn.co/image/grande", "width": 640},
+                    {"url": "https://i.scdn.co/image/mediana", "width": 300},
+                    {"url": "https://i.scdn.co/image/pequena", "width": 64}
+                ]}
+            }
+        });
+        let track = imported_track_from_container(&item).expect("pista");
+        assert_eq!(track.cover, "https://i.scdn.co/image/mediana");
     }
 
     #[test]

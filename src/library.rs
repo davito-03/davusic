@@ -2,6 +2,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lofty::file::{AudioFile, TaggedFileExt};
@@ -58,7 +59,51 @@ fn emit_progress(app: Option<&AppHandle>, done: usize, total: usize, current: &s
     }
 }
 
-pub fn scan(paths: &Paths, config: &Config, app: Option<&AppHandle>) -> LibrarySnapshot {
+/// Estado compartido por los hilos de un escaneo.
+struct ScanShared {
+    /// Carátula de carpeta (cover.jpg…) ya resuelta para cada directorio.
+    folders: parking_lot::Mutex<HashMap<PathBuf, Option<CoverInfo>>>,
+    /// Carátulas ya procesadas en este escaneo, por hash de contenido: las
+    /// pistas de un mismo álbum llevan la misma imagen incrustada.
+    images: parking_lot::Mutex<HashMap<u64, CoverInfo>>,
+}
+
+/// Fecha de modificación (segundos) y tamaño, la huella barata de un archivo.
+fn file_stamp(path: &Path) -> Option<(u64, u64)> {
+    let meta = fs::metadata(path).ok()?;
+    let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some((modified, meta.len()))
+}
+
+/// Una pista de la caché sigue valiendo si el archivo no ha cambiado y su
+/// carátula extraída sigue en disco.
+fn still_valid(paths: &Paths, cached: &Track, path: &Path) -> bool {
+    let Some((modified, size)) = file_stamp(path) else {
+        return false;
+    };
+    if size == 0 || cached.file_size != size || cached.added_at != modified {
+        return false;
+    }
+    match cached.cover.strip_prefix("cover://localhost/") {
+        Some(name) => paths.is_cover_file(name).is_some(),
+        None => cached.cover.is_empty(),
+    }
+}
+
+/// Escanea las carpetas configuradas. Si `force` es falso se reutilizan de la
+/// caché las pistas cuyos archivos no han cambiado, de modo que un arranque
+/// normal no vuelve a leer etiquetas ni a decodificar carátulas.
+pub fn scan(
+    paths: &Paths,
+    config: &Config,
+    app: Option<&AppHandle>,
+    force: bool,
+) -> LibrarySnapshot {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut folder_counts: HashMap<String, u64> = HashMap::new();
@@ -94,20 +139,67 @@ pub fn scan(paths: &Paths, config: &Config, app: Option<&AppHandle>) -> LibraryS
     let total = files.len();
     emit_progress(app, 0, total, "");
 
-    let mut tracks: Vec<Track> = Vec::with_capacity(total);
-    let mut cover_store: HashMap<PathBuf, Option<CoverInfo>> = HashMap::new();
+    let mut known: HashMap<String, Track> = if force {
+        HashMap::new()
+    } else {
+        load_cache(paths)
+            .tracks
+            .into_iter()
+            .map(|track| (track.path.clone(), track))
+            .collect()
+    };
+    // Cada archivo recibe su pista de la caché (si la hay) antes de repartir
+    // el trabajo, para que los hilos no compitan por el mapa.
+    let jobs: Vec<(PathBuf, Option<Track>)> = files
+        .into_iter()
+        .map(|path| {
+            let cached = known.remove(path.to_string_lossy().as_ref());
+            (path, cached)
+        })
+        .collect();
+    drop(known);
 
-    for (index, path) in files.iter().enumerate() {
-        if let Some(track) = read_track(paths, path, &mut cover_store) {
-            tracks.push(track);
+    let shared = ScanShared {
+        folders: parking_lot::Mutex::new(HashMap::new()),
+        images: parking_lot::Mutex::new(HashMap::new()),
+    };
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let slots: parking_lot::Mutex<Vec<Option<Track>>> =
+        parking_lot::Mutex::new((0..total).map(|_| None).collect());
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .clamp(1, 8)
+        .min(total.max(1));
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some((path, cached)) = jobs.get(index) else {
+                    break;
+                };
+                let track = match cached {
+                    Some(track) if still_valid(paths, track, path) => Some(track.clone()),
+                    _ => read_track(paths, path, &shared),
+                };
+                if track.is_some() {
+                    slots.lock()[index] = track;
+                }
+                let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                // Un evento por archivo satura la interfaz en bibliotecas grandes.
+                if finished % 24 == 0 || finished == total {
+                    emit_progress(
+                        app,
+                        finished,
+                        total,
+                        path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                    );
+                }
+            });
         }
-        emit_progress(
-            app,
-            index + 1,
-            total,
-            path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-        );
-    }
+    });
+    let mut tracks: Vec<Track> = slots.into_inner().into_iter().flatten().collect();
 
     tracks.sort_by(|a, b| {
         a.artist
@@ -244,11 +336,7 @@ pub fn scan(paths: &Paths, config: &Config, app: Option<&AppHandle>) -> LibraryS
     }
 }
 
-fn read_track(
-    paths: &Paths,
-    path: &Path,
-    cover_store: &mut HashMap<PathBuf, Option<CoverInfo>>,
-) -> Option<Track> {
+fn read_track(paths: &Paths, path: &Path, shared: &ScanShared) -> Option<Track> {
     let tagged = lofty::read_from_path(path).ok();
     let (
         tag_title,
@@ -352,7 +440,7 @@ fn read_track(
         .map(|bitrate| format!("{} · {} kbps", paths::format_label(path), bitrate / 1000))
         .unwrap_or_else(|| paths::format_label(path));
 
-    let cover = cover_for(paths, path, tagged.as_ref(), cover_store);
+    let cover = cover_for(paths, path, tagged.as_ref(), shared);
     let path_string = path.to_string_lossy().to_string();
     let id = paths::stable_id("track", &path_string);
     let album_artist_key = fold(&album_artist);
@@ -361,17 +449,13 @@ fn read_track(
         &format!("{album_artist_key}\u{1f}{}", fold(&album)),
     );
     let artist_id = paths::stable_id("artist", &fold(&artist));
-    let added_at = fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-        });
+    let (added_at, file_size) = file_stamp(path).unwrap_or_else(|| {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        (now, 0)
+    });
 
     let (cover_url, accent, accent2) = cover
         .map(|c| (c.url, c.accent, c.accent2))
@@ -400,6 +484,7 @@ fn read_track(
         added_at,
         source: "local".into(),
         uri: String::new(),
+        file_size,
     })
 }
 
@@ -407,12 +492,12 @@ fn cover_for(
     paths: &Paths,
     audio_path: &Path,
     tagged: Option<&lofty::file::TaggedFile>,
-    cache: &mut HashMap<PathBuf, Option<CoverInfo>>,
+    shared: &ScanShared,
 ) -> Option<CoverInfo> {
     if let Some(tagged) = tagged {
         if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
             if let Some(picture) = tag.pictures().first() {
-                if let Some(info) = store_image(paths, picture.data()) {
+                if let Some(info) = store_image(paths, picture.data(), shared) {
                     return Some(info);
                 }
             }
@@ -420,7 +505,7 @@ fn cover_for(
     }
 
     let folder = audio_path.parent()?;
-    if let Some(cached) = cache.get(folder) {
+    if let Some(cached) = shared.folders.lock().get(folder) {
         return cached.clone();
     }
 
@@ -441,7 +526,7 @@ fn cover_for(
             let candidate = folder.join(format!("{name}.{ext}"));
             if candidate.is_file() {
                 if let Ok(bytes) = fs::read(&candidate) {
-                    if let Some(info) = store_image(paths, &bytes) {
+                    if let Some(info) = store_image(paths, &bytes, shared) {
                         result = Some(info);
                         break 'outer;
                     }
@@ -449,18 +534,19 @@ fn cover_for(
             }
         }
     }
-    cache.insert(folder.to_path_buf(), result.clone());
+    shared
+        .folders
+        .lock()
+        .insert(folder.to_path_buf(), result.clone());
     result
 }
 
-fn store_image(paths: &Paths, bytes: &[u8]) -> Option<CoverInfo> {
+fn store_image(paths: &Paths, bytes: &[u8], shared: &ScanShared) -> Option<CoverInfo> {
     if bytes.len() < 32 {
         return None;
     }
-    let image = image::load_from_memory(bytes).ok()?;
-    let (accent, accent2) = palette::cover_colors(&image);
+    // Un hash barato del contenido evita decodificar y reescribir la misma carátula.
     let hash = paths::stable_hash(&format!("{}:{}", bytes.len(), {
-        // Un hash barato del contenido evita reescribir la misma carátula.
         let step = (bytes.len() / 4096).max(1);
         let mut h = 0u64;
         let mut i = 0;
@@ -470,23 +556,38 @@ fn store_image(paths: &Paths, bytes: &[u8]) -> Option<CoverInfo> {
         }
         h
     }));
+    if let Some(known) = shared.images.lock().get(&hash) {
+        return Some(known.clone());
+    }
+    let image = image::load_from_memory(bytes).ok()?;
+    let (accent, accent2) = palette::cover_colors(&image);
     let name = format!("cover-{hash:016x}.jpg");
     let target = paths.covers.join(&name);
     if !target.is_file() {
         let max = 900u32;
         let resized = if image.width() > max || image.height() > max {
-            image.resize(max, max, image::imageops::FilterType::Lanczos3)
+            image.resize(max, max, image::imageops::FilterType::CatmullRom)
         } else {
             image
         };
         let rgb = resized.to_rgb8();
-        let _ = rgb.save_with_format(&target, image::ImageFormat::Jpeg);
+        // Se escribe aparte y se renombra: otro hilo puede estar guardando la misma imagen.
+        let tmp = paths
+            .covers
+            .join(format!("{name}.{:?}.tmp", std::thread::current().id()));
+        if rgb.save_with_format(&tmp, image::ImageFormat::Jpeg).is_ok() {
+            let _ = fs::rename(&tmp, &target);
+        } else {
+            let _ = fs::remove_file(&tmp);
+        }
     }
-    Some(CoverInfo {
+    let info = CoverInfo {
         url: paths.cover_url(&name),
         accent,
         accent2,
-    })
+    };
+    shared.images.lock().insert(hash, info.clone());
+    Some(info)
 }
 
 fn fold(value: &str) -> String {
